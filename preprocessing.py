@@ -16,12 +16,12 @@ view with markers overlaid (explained above). Thus, there are total number of 6 
 placemark.
 
 GPS Coordinates & Compass Direction:
-The Matlab file ‘GPS_Long_Lat_Compass.mat’ includes the GPS coordinates and compass
+The Matlab file 'GPS_Long_Lat_Compass.mat' includes the GPS coordinates and compass
 direction of each placemark. The row number XXXXXX corresponds to the placemark number
 XXXXXX. The 1st and 2nd columns are the latitude and longitude values. The 3rd column is the
 compass direction (in degrees from North towards West) of the view number 4. The rest of the
 side views are exactly 90° apart from the view number 4.
-The file ‘Cartesian_Location_Coordinates.mat’ contains the location coordinates in a metric
+The file 'Cartesian_Location_Coordinates.mat' contains the location coordinates in a metric
 Cartesian system (unlike longitude and latitude). The Euclidean distance between such XYZ
 coordinates of two points is the actual distance (in meters) between them.
 
@@ -55,20 +55,13 @@ from tqdm import tqdm
 from joblib import Parallel, delayed
 import multiprocessing
 
-def load_image(filename, target_shape):
-    """
-    Load a single image and return it as a numpy array
-    """
-    image = Image.open(filename).resize(target_shape)
-    return np.asarray(image)
-
 import matplotlib
 matplotlib.use("tkagg")
 from matplotlib import pyplot as plt
 
 
 DATA_PATH = "../data/"
-NUM_SAMPLES = 1000
+NUM_SAMPLES = 500
 
 def get_coordinates():
     """
@@ -80,10 +73,21 @@ def get_coordinates():
     return mat["XYZ_Cartesian"][:NUM_SAMPLES]
 
 
-def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_arr"):
+def load_image(filename, target_shape):
+    """
+    load a single image
+    """
+    image = Image.open(filename).resize(target_shape)
+    return np.asarray(image) / 255
+
+def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_arr", save=True, load=True):
     """
     load and save all available images
     """
+
+    if load:
+        if os.path.exists(DATA_PATH + image_arr_filename + ".npy"):
+            return np.load(DATA_PATH + image_arr_filename + ".npy")
 
     num_angles = 4
     files = os.listdir(DATA_PATH + image_dir)
@@ -94,26 +98,32 @@ def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_ar
     print("loading", NUM_SAMPLES, "images from", DATA_PATH + image_dir)
     images = np.empty((NUM_SAMPLES, num_angles, target_shape[0], target_shape[1], 3))
 
-    num_cores = multiprocessing.cpu_count()
-    filenames = [DATA_PATH + image_dir + file for file in files]
-    results = Parallel(n_jobs=num_cores)(delayed(load_image)(filename, target_shape) for filename in tqdm(filenames))
-
-    for filename, result in zip(files, results):
-        filename = filename.split('.')[0]
-        index, angle = map(int, filename.split('_'))
+    indices, angles = [], []
+    filepaths = []
+    for file in files:
+        index, angle = map(int, file.split('.')[0].split('_'))
         index, angle = index - 1, angle - 1
         if angle == -1 or angle == 4: continue
+        indices.append(index)
+        angles.append(angle)
+        filepaths.append(DATA_PATH + image_dir + file)
+
+    num_cores = multiprocessing.cpu_count()
+    results = Parallel(n_jobs=num_cores)(delayed(load_image)(filepath, target_shape) for filepath in tqdm(filepaths))
+
+    for index, angle, result in zip(indices, angles, results):
         images[index, angle] = result
 
-    np.save(DATA_PATH + image_arr_filename, images)
-    print("image array saved at", DATA_PATH + image_arr_filename)
+    if save:
+        np.save(DATA_PATH + image_arr_filename, images)
+        print("image array saved at", DATA_PATH + image_arr_filename)
+    
+    return images
 
 
 def main():
-    # load_images("images/")
-
+    images = load_images("images/")
     coords = get_coordinates()
-    images = np.load(DATA_PATH + "image_arr.npy")
 
     print(coords.shape, images.shape)
 
