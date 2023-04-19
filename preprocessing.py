@@ -69,8 +69,8 @@ def get_coordinates():
     """
     filename = "Cartesian_Location_Coordinates.mat"
     print("loading", NUM_SAMPLES, "coordinates from", DATA_PATH + filename)
-    mat = loadmat(DATA_PATH + filename)
-    return mat["XYZ_Cartesian"][:NUM_SAMPLES]
+    coords = np.array(loadmat(DATA_PATH + filename)["XYZ_Cartesian"][:NUM_SAMPLES])
+    return (coords - np.min(coords)) / (np.max(coords) - np.min(coords))
 
 
 def load_image(filename, target_shape):
@@ -80,7 +80,7 @@ def load_image(filename, target_shape):
     image = Image.open(filename).resize(target_shape)
     return np.asarray(image) / 255
 
-def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_arr", save=True, load=True):
+def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_arr", save=True, load=True, one_angle=False):
     """
     load and save all available images
     """
@@ -96,7 +96,10 @@ def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_ar
     files = files[:NUM_SAMPLES * 6]
 
     print("loading", NUM_SAMPLES, "images from", DATA_PATH + image_dir)
-    images = np.empty((NUM_SAMPLES, num_angles, target_shape[0], target_shape[1], 3))
+    if one_angle:
+        images = np.empty((NUM_SAMPLES, target_shape[0], target_shape[1], 3))
+    else:
+        images = np.empty((NUM_SAMPLES, num_angles, target_shape[0], target_shape[1], 3))
 
     indices, angles = [], []
     filepaths = []
@@ -112,7 +115,10 @@ def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_ar
     results = Parallel(n_jobs=num_cores)(delayed(load_image)(filepath, target_shape) for filepath in tqdm(filepaths))
 
     for index, angle, result in zip(indices, angles, results):
-        images[index, angle] = result
+        if one_angle:
+            images[index] = result
+        else:
+            images[index, angle] = result
 
     if save:
         np.save(DATA_PATH + image_arr_filename, images)
@@ -120,12 +126,11 @@ def load_images(image_dir, target_shape=(224, 224), image_arr_filename="image_ar
     
     return images
 
-
 def main():
     images = load_images("images/")
     coords = get_coordinates()
 
-    print(coords.shape, images.shape)
+    print(coords.shape, images.shape, one_angle=True)
 
 if __name__ == "__main__":
     main()
