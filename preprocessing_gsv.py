@@ -2,6 +2,7 @@ import os
 import random
 import numpy as np
 import pandas as pd
+import tensorflow as tf
 from PIL import Image
 from tqdm import tqdm
 
@@ -27,6 +28,18 @@ publisher={Elsevier}
 
 
 DATA_PATH = "../data/archive/"
+
+
+def pass_through_VGG(data):
+    vgg = tf.keras.applications.VGG19(
+        include_top=False,
+        weights="imagenet",
+        input_tensor=None,
+        input_shape=data.shape[1:],
+        pooling=None,
+    )
+    
+    return vgg(data)
 
 
 def train_test_split(data, prop=16/23):
@@ -111,6 +124,52 @@ def load_images(image_path):
                 pbar.update(1)
     
     return data
+
+
+
+def load_data(data_path):
+    """
+    loads saved data
+    """
+
+    print("loading data from", data_path, "...")
+
+    images = []
+    labels = []
+    cities = []
+    files = os.listdir(data_path)
+    for file in tqdm(files):
+        info = list(file.split('.jpg')[0].split('_'))[:3]
+        city, lat, lon = info
+        with Image.open(data_path + file) as image:
+            images.append(np.array(image.resize((300, 400))))
+            labels.append(np.array([float(lat), float(lon)]))
+            cities.append(city)
+    images = np.stack(images)
+    labels = np.stack(labels)
+    cities = np.array(cities)
+    
+    return images, labels, cities
+
+def save_data(images, labels, cities, data_path):
+    """
+    saves data
+    """
+
+    print("saving data to", data_path, "...")
+    
+    for image, label, city in tqdm(zip(images, labels, cities)):
+        lat, lon = label
+        image = Image.fromarray(image)
+        filepath = data_path + city + "_" + str(lat) + "_" + str(lon) + ".jpg"
+        image.save(fp=filepath)
+    images = np.stack(images)
+    labels = np.stack(labels)
+    cities = np.array(cities)
+    
+    return images, labels, cities
+
+
 
 def main():
     paths = load_random_data("Images/")

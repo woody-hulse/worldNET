@@ -30,7 +30,6 @@ class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
         mean_distance = tf.reduce_mean(distance)
 
         return mean_distance
-    
 
 
 class NaiveVGG(tf.keras.Model):
@@ -63,13 +62,11 @@ class NaiveVGG(tf.keras.Model):
         if freeze_vgg:
             self.vgg.trainable = False
 
-
         self.loss = tf.keras.losses.MeanSquaredError()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
     def call(self, input):
-        x = tf.keras.applications.vgg19.preprocess_input(input)
-        x = self.vgg(x)
+        x = self.vgg(input)
         x = self.flatten_layer(x)
         for dense_layer, dropout_layer in self.head:
             x = dense_layer(x)

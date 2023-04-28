@@ -29,10 +29,18 @@ def print_results(models, test_data, test_labels, metrics):
     print()
 
 
+def main(save=True, load=False):
 
-def main():
+    data_path = "data/"
     
-    images, labels, cities = preprocessing.load_random_data()
+    if load:
+        images, labels, cities = preprocessing.load_data(data_path)
+    else:
+        images, labels, cities = preprocessing.load_random_data()
+        if save:
+            preprocessing.save_data(images, labels, cities, data_path)
+
+    # images = preprocessing.pass_through_VGG(images) # temporary, to reduce training time
 
     train_images, test_images = preprocessing.train_test_split(images)
     train_labels, test_labels = preprocessing.train_test_split(labels)
@@ -55,19 +63,19 @@ def main():
     simple_nn_model_haversine.fit(train_images, train_labels, batch_size=16, epochs=4, validation_data=(test_images, test_labels))
 
     print("\nnaive vgg ...")
-    
-    naive_vgg_model = models.NaiveVGG(input_shape=images.shape[1:], units=32, output_units=2)
+
+    naive_vgg_model = models.NaiveVGG(input_shape=images.shape[1:], units=8, output_units=2, layers=1)
     naive_vgg_model.compile(
         optimizer=naive_vgg_model.optimizer,
-        loss=naive_vgg_model.loss,
+        loss=models.MeanHaversineDistanceLoss(),
         metrics=[],
     )
     naive_vgg_model.build(images.shape)
     naive_vgg_model.summary()
-    # model.fit(train_images, train_labels, batch_size=64, epochs=4, validation_data=(test_images, test_labels))
+    naive_vgg_model.fit(train_images, train_labels, batch_size=64, epochs=4, validation_data=(test_images, test_labels))
 
-    mean_model = models.MeanModel(train_labels=train_labels, loss_fn=naive_vgg_model.loss)
-    guess_model = models.GuessModel(train_labels=train_labels, loss_fn=naive_vgg_model.loss)
+    mean_model = models.MeanModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
+    guess_model = models.GuessModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
 
     print_results([simple_nn_model_mse, simple_nn_model_haversine, mean_model, guess_model], test_images, test_labels, 
                   metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss()])
@@ -75,4 +83,4 @@ def main():
 
 if __name__ == "__main__":
     os.system("clear")
-    main()
+    main(save=False, load=True)
