@@ -1,6 +1,9 @@
 import tensorflow as tf
 import numpy as np
 import random
+from tqdm import tqdm
+
+import preprocessing_gsv as preprocessing
 
 def radians(deg):
     pi_on_180 = 0.017453292519943295
@@ -8,10 +11,17 @@ def radians(deg):
 
 
 class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
+    """
+    computes haversine distance loss
+    """
     def __init__(self, name="mean_haversine_distance_loss"):
         super().__init__(name=name)
 
     def call(self, y_true, y_pred):
+
+        y_true = preprocessing.unnormalize_labels(y_true)
+        y_pred = preprocessing.unnormalize_labels(y_pred)
+
         earth_radius = 6371000
         lat1, lon1 = tf.unstack(y_true, axis=-1)
         lat2, lon2 = tf.unstack(y_pred, axis=-1)
@@ -26,6 +36,41 @@ class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
         c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
         distance = earth_radius * c
+
+        mean_distance = tf.reduce_mean(distance)
+
+        return mean_distance
+    
+
+class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
+    """
+    computes haversine distance loss for a distribution
+    """
+    def __init__(self, name="mean_normal_haversine_distance_loss"):
+        super().__init__(name=name)
+
+    def call(self, y_true, mu, sigma):
+
+        y_true = preprocessing.unnormalize_labels(y_true)
+        mu = preprocessing.unnormalize_labels(mu)
+
+        earth_radius = 6371000
+        lat1, lon1 = tf.unstack(y_true, axis=-1)
+        lat2, lon2 = tf.unstack(mu, axis=-1)
+
+        lat1_rad = tf.cast(lat1 * np.pi / 180, tf.float32)
+        lon1_rad = tf.cast(lon1 * np.pi / 180, tf.float32)
+        lat2_rad = tf.cast(lat2 * np.pi / 180, tf.float32)
+        lon2_rad = tf.cast(lon2 * np.pi / 180, tf.float32)
+
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
+        c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
+        distance = earth_radius * c
+
+        # distance /= sigma
+        distance += sigma
 
         mean_distance = tf.reduce_mean(distance)
 
@@ -62,7 +107,7 @@ class NaiveVGG(tf.keras.Model):
         if freeze_vgg:
             self.vgg.trainable = False
 
-        self.loss = tf.keras.losses.MeanSquaredError()
+        self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
     def call(self, input):
@@ -74,6 +119,7 @@ class NaiveVGG(tf.keras.Model):
         x = self.output_layer(x)
 
         return x
+
     
 
 class GuessModel():
@@ -126,10 +172,123 @@ class SimpleNN(tf.keras.Model):
 
         super().__init__(name=name)
         self.flatten = tf.keras.layers.Flatten()
-        self.dense = tf.keras.layers.Dense(output_units, activation='softmax')
+        self.dense = tf.keras.layers.Dense(output_units, activation='sigmoid')
 
         self.loss = tf.keras.losses.MeanSquaredError()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
     
     def call(self, data):
         return self.dense(self.flatten(data))
+
+
+
+class FeatureDistributionNN(tf.keras.Model):
+
+    """
+    predicts the mean and standard deviation of location of features
+    """
+
+    def __init__(self, hidden_size=8, name="feature_distribution_nn"):
+
+        super().__init__(name=name)
+
+        self.dense_layer1 = tf.keras.layers.Dense(hidden_size, activation="relu")
+        self.dense_layer2 = tf.keras.layers.Dense(hidden_size, activation="relu")
+        self.mu_layer = tf.keras.layers.Dense(2, activation="sigmoid")
+        self.sigma_layer = tf.keras.layers.Dense(1, activation="sigmoid")
+
+        self.loss = MeanNormalHaversineDistanceLoss()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+    
+    def call(self, x):
+        x = self.dense_layer1(x)
+        x = self.dense_layer2(x)
+        mu = self.mu_layer(x)
+        sigma = self.sigma_layer(x)
+        return mu, sigma
+    
+
+
+class FeatureDistributionModel(tf.keras.Model):
+
+    """
+
+    TODO
+
+    predicts location based on feature locations
+
+    """
+
+    def __init__(self, hidden_size=8, name="feature_distribution_model"):
+        
+        super().__init__(name=name)
+
+        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size)
+
+    
+    def call(self, x):
+        # TODO
+        return x
+
+
+
+    
+
+class FeatureNearestNeighbors():
+
+
+    """
+    
+    TODO
+
+    general idea:
+
+        store all or some of the training feature vectors and their corresponding latitude/longitude label
+        for each example in a testing dataset:
+            find the k nearest neighbors (with either euclidian or cosine or some other similarity metric)
+            compute the weighted mean of their locations
+            compute the weighted standard deviation of their locations
+            return this mean and standard deviation
+    
+    """
+
+    def __init__(self, input_shape=(224, 224, 3), vector_shape=(12, 9), name="feature_nearest_neighbors"):
+        self.name = name
+
+        self.vector_shape = vector_shape
+        self.vectors = []
+        self.labels = []
+
+        # self.vgg = tf.keras.models.load_model("weights/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5")
+        # self.vgg.summary()
+        
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+        
+        self.vgg.trainable = False
+
+        self.loss = MeanHaversineDistanceLoss()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+    def train(self, images, labels):
+
+        # TODO
+        
+        num_images = len(images)
+        
+        vgg_features = self.vgg(images)
+
+        print("\n" + self.name, "training on", num_images, "images ...")
+
+        with tqdm(total=num_images) as pbar:
+            for features, label in zip(vgg_features, labels):
+                for feature in features:
+                    self.vectors.append(feature.flatten())
+                    self.labels.append(label)
+                pbar.update(1)
+    
