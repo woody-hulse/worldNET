@@ -390,12 +390,11 @@ class FeatureDistributionModel():
 
 
 
-class FeatureDistributionModel2(tf.keras.Model):
+class VGGFeatureDistributionModel(tf.keras.Model):
 
-    def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, name="feature_distribution_model"):
+    def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, name="vgg_feature_distribution_model"):
         
-        self.name = name
-        self.num_clusters = 5
+        super().__init__(name=name)
 
         self.vgg = tf.keras.applications.VGG19(
             include_top=False,
@@ -407,31 +406,45 @@ class FeatureDistributionModel2(tf.keras.Model):
 
         self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size, num_layers=num_layers)
 
-        self.loss = MeanNormalHaversineDistanceLoss()
+        self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
 
     def call(self, x):
         x = self.vgg(x)
+        x = tf.transpose(x, perm=[0, 3, 1, 2])
+        x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+        mu, sigma = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
+        return mu
+        
+    
 
-        print(x.shape)
+class worldNET():
 
-        return tf.zeros(x.shape[0])
+    def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, num_clusters=5, name="worldnet"):
 
-    def predict(self, x):
-        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
-        mean_preds, sigma_preds = mean_preds.numpy(), sigma_preds.numpy()
+        self.name = name
+        self.num_clusters = num_clusters
+
+        self.feature_distribution_model = VGGFeatureDistributionModel(input_shape, hidden_size, num_layers)
+
+        self.loss = MeanHaversineDistanceLoss()
+    
+    def call(self, x):
+        mean_preds = self.call(x).numpy()
 
         centers = []
-        for mean, sigma in zip(mean_preds, sigma_preds):
+        for means in mean_preds:
             kmeans = KMeans(n_clusters=self.num_clusters, n_init='auto')
-            kmeans.fit(mean)
+            kmeans.fit(means)
 
             cluster_totals = np.sum(np.eye(self.num_clusters)[kmeans.labels_], axis=1)
 
             centers.append(kmeans.cluster_centers_[np.argmax(cluster_totals)])
         
         return np.array(centers)
+        
+
 
     
 

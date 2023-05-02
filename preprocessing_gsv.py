@@ -35,12 +35,12 @@ DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
 
 
-def group_feature_labels(labels):
+def group_feature_labels(labels, num_features=512):
     """
     groups every 512 feature labels
     """
 
-    return labels.reshape(-1, 512, labels.shape[1], labels.shape[2])
+    return labels.reshape(-1, num_features, labels.shape[1])
 
 
 def shuffle_data(images, labels, cities):
