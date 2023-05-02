@@ -5,7 +5,11 @@ import pandas as pd
 import tensorflow as tf
 from PIL import Image
 from tqdm import tqdm
+import glob
 
+import matplotlib
+matplotlib.use("tkagg")
+from matplotlib import pyplot as plt
 
 """
 
@@ -29,6 +33,49 @@ publisher={Elsevier}
 
 DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
+
+
+def group_feature_labels(labels):
+    """
+    groups every 512 feature labels
+    """
+
+    return labels.reshape(-1, 512, labels.shape[1], labels.shape[2])
+
+
+def shuffle_data(images, labels, cities):
+    """
+    randomly shuffles data
+    """
+    
+    indices = np.arange(len(images))
+    np.random.shuffle(indices)
+
+    return images[indices], labels[indices], cities[indices]
+
+
+def remove_files(filepath):
+    """
+    removes all files from directory
+    """
+
+    files = glob.glob(filepath)
+    for f in files:
+        os.remove(f)
+
+
+def plot_features(features, num):
+    """
+    plots some number of features
+    """
+
+
+    indices = np.arange(len(features))
+    np.random.shuffle(indices)
+
+    for i in indices[:num]:
+        plt.imshow(features[i].reshape(9, 12))
+        plt.show()
 
 
 def normalize_labels(labels):
@@ -82,6 +129,7 @@ def reshape_features(image_features, labels, cities):
     feature_vectors = []
     feature_labels = []
     feature_cities = []
+
     print("\nreshaping features ...")
     image_features = np.transpose(image_features, axes=[0, 3, 1, 2])
     with tqdm(total=image_features.shape[0] * image_features.shape[1]) as pbar:
@@ -97,6 +145,15 @@ def reshape_features(image_features, labels, cities):
     feature_cities = np.array(feature_cities)
 
     return feature_vectors, feature_labels, feature_cities
+
+
+def reshape_grouped_features(image_features, labels, cities):
+    """
+    transpose features
+    """
+    image_features = np.transpose(image_features, axes=[0, 3, 1, 2])
+    image_features = image_features.reshape((image_features.shape[0], image_features.shape[1], -1))
+    return image_features, labels, cities
 
 def train_test_split(data, prop=16/23):
     """
@@ -216,7 +273,7 @@ def save_data(images, labels, cities, data_path):
 
     print("saving data to", data_path, "...")
     
-    with tqdm(total=len(images)) as pbar:
+    with tqdm(total=len(images) + 1) as pbar:
         for image, label, city in zip(images, labels, cities):
             lat, lon = label
             image = Image.fromarray(image)

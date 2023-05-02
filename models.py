@@ -1,13 +1,77 @@
 import tensorflow as tf
 import numpy as np
+from math import erf
+from scipy.stats import multivariate_normal
 import random
 from tqdm import tqdm
+from sklearn.cluster import KMeans
+
+import matplotlib
+matplotlib.use("tkagg")
+from matplotlib import pyplot as plt
 
 import preprocessing_gsv as preprocessing
 
 def radians(deg):
     pi_on_180 = 0.017453292519943295
     return deg * pi_on_180
+
+
+class DistanceAccuracy():
+    """
+    computes accuracy for threshold distance
+    """
+
+    def __init__(self, thresh=1000000, name="distance_accuracy"):
+        self.thresh = thresh
+        self.name = name
+    
+    def update_state(self, y_true, y_pred, sample_weight=None):
+        y_true = preprocessing.unnormalize_labels(y_true)
+        y_pred = preprocessing.unnormalize_labels(y_pred)
+
+        earth_radius = 6371000
+        lat1, lon1 = tf.unstack(y_true, axis=-1)
+        lat2, lon2 = tf.unstack(y_pred, axis=-1)
+
+        lat1_rad = tf.cast(lat1 * np.pi / 180, tf.float32)
+        lon1_rad = tf.cast(lon1 * np.pi / 180, tf.float32)
+        lat2_rad = tf.cast(lat2 * np.pi / 180, tf.float32)
+        lon2_rad = tf.cast(lon2 * np.pi / 180, tf.float32)
+
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
+        c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
+        distance = earth_radius * c
+
+        y_pred = tf.reduce_mean(tf.cast(distance < self.thresh, tf.float32))
+
+        super().update_state(y_true, y_pred, sample_weight)
+
+    def call(self, y_true, y_pred):
+        y_true = preprocessing.unnormalize_labels(y_true)
+        y_pred = preprocessing.unnormalize_labels(y_pred)
+
+        earth_radius = 6371000
+        lat1, lon1 = tf.unstack(y_true, axis=-1)
+        lat2, lon2 = tf.unstack(y_pred, axis=-1)
+
+        lat1_rad = tf.cast(lat1 * np.pi / 180, tf.float32)
+        lon1_rad = tf.cast(lon1 * np.pi / 180, tf.float32)
+        lat2_rad = tf.cast(lat2 * np.pi / 180, tf.float32)
+        lon2_rad = tf.cast(lon2 * np.pi / 180, tf.float32)
+
+        dlat = lat2_rad - lat1_rad
+        dlon = lon2_rad - lon1_rad
+        a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
+        c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
+        distance = earth_radius * c
+
+        return tf.reduce_mean(tf.cast(distance < self.thresh, tf.float32))
+    
+    def __call__(self, y_true, y_pred):
+        return self.call(y_true, y_pred)
 
 
 class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
@@ -67,14 +131,20 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
         c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
-        distance = earth_radius * c
+        # distance = earth_radius * c
 
         # distance /= sigma
-        distance += sigma
+        # distance += sigma
 
-        mean_distance = tf.reduce_mean(distance)
+        mean_c = tf.reduce_mean(c)
+        std_c = tf.math.reduce_std(c)
+        std_mu = tf.reduce_sum(tf.math.reduce_std(mu, axis=0))
 
-        return mean_distance
+        mean_sigma = tf.reduce_mean(sigma)
+        
+        epsilon = (1e-9)
+
+        return mean_c + 1 / (std_c + epsilon) + (1 / mean_sigma + mean_sigma) / 100
 
 
 class NaiveVGG(tf.keras.Model):
@@ -82,21 +152,12 @@ class NaiveVGG(tf.keras.Model):
             units		= 512, 				# number of units in each dense layer
             layers		= 2, 				# number of dense layers
             dropout		= 0.2, 				# dropout proportion per dense layer
-            input_shape	= (224, 224, 3), 	# input shape
             output_units= 2, 				# number of units in output dense layer
-            freeze_vgg	= True, 			# freeze vgg weights
             name		= "naive_vgg"		# name of model
         ):		
         
-        super().__init__()
+        super().__init__(name=name)
 
-        self.vgg = tf.keras.applications.VGG19(
-            include_top=False,
-            weights="imagenet",
-            input_tensor=None,
-            input_shape=input_shape,
-            pooling=None,
-        )
         self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
         self.head = [
             (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
@@ -104,15 +165,11 @@ class NaiveVGG(tf.keras.Model):
         ]
         self.output_layer = tf.keras.layers.Dense(output_units, name = f"{name}_output_dense")
 
-        if freeze_vgg:
-            self.vgg.trainable = False
-
         self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
-    def call(self, input):
-        x = self.vgg(input)
-        x = self.flatten_layer(x)
+    def call(self, features):
+        x = self.flatten_layer(features)
         for dense_layer, dropout_layer in self.head:
             x = dense_layer(x)
             x = dropout_layer(x)
@@ -161,6 +218,19 @@ class MeanModel():
         
         return pred_labels
     
+
+class RandomizedGuessModel():
+
+    """
+    predicts random location
+    """
+
+    def __init__(self, name="randomized_guess_model"):
+        self.name = name
+    
+    def call(self, x):
+        return np.random.random(2)
+    
     
 class SimpleNN(tf.keras.Model):
 
@@ -188,28 +258,30 @@ class FeatureDistributionNN(tf.keras.Model):
     predicts the mean and standard deviation of location of features
     """
 
-    def __init__(self, hidden_size=8, name="feature_distribution_nn"):
+    def __init__(self, hidden_size=8, num_layers=4, name="feature_distribution_nn"):
 
         super().__init__(name=name)
 
-        self.dense_layer1 = tf.keras.layers.Dense(hidden_size, activation="relu")
-        self.dense_layer2 = tf.keras.layers.Dense(hidden_size, activation="relu")
+        self.dense_layers = [
+            tf.keras.layers.Dense(hidden_size, activation="relu") for _ in range(num_layers)
+        ]
         self.mu_layer = tf.keras.layers.Dense(2, activation="sigmoid")
         self.sigma_layer = tf.keras.layers.Dense(1, activation="sigmoid")
 
         self.loss = MeanNormalHaversineDistanceLoss()
-        self.optimizer = tf.keras.optimizers.Adam(0.01)
+        self.optimizer = tf.keras.optimizers.Adam(0.004)
     
     def call(self, x):
-        x = self.dense_layer1(x)
-        x = self.dense_layer2(x)
+        for layer in self.dense_layers:
+            x = layer(x)
+            x = tf.keras.layers.Dropout(0.1)(x)
         mu = self.mu_layer(x)
         sigma = self.sigma_layer(x)
         return mu, sigma
     
 
 
-class FeatureDistributionModel(tf.keras.Model):
+class FeatureDistributionModel():
 
     """
 
@@ -219,18 +291,147 @@ class FeatureDistributionModel(tf.keras.Model):
 
     """
 
-    def __init__(self, hidden_size=8, name="feature_distribution_model"):
+    def __init__(self, hidden_size=8, num_layers=2, name="feature_distribution_model"):
         
-        super().__init__(name=name)
+        self.name = name
+        self.num_clusters = 5
 
-        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size)
+        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size, num_layers=num_layers)
 
-    
+        self.loss = MeanNormalHaversineDistanceLoss()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+
     def call(self, x):
-        # TODO
-        return x
+        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
+        mean_preds, sigma_preds = mean_preds.numpy(), sigma_preds.numpy()
+
+        centers = []
+        for mean, sigma in zip(mean_preds, sigma_preds):
+            kmeans = KMeans(n_clusters=self.num_clusters, n_init='auto')
+            kmeans.fit(mean)
+
+            cluster_totals = np.sum(np.eye(self.num_clusters)[kmeans.labels_], axis=1)
+
+            centers.append(kmeans.cluster_centers_[np.argmax(cluster_totals)])
+        
+        return np.array(centers)
+
+    """
+    def call(self, x):
+        Predict the most likely coordinate given samples of features.
+        Logic:
+        Find the maximum point of the sum of probability distribution functions (PDF) of all normal distributions.
+        Since there may be a lot of local max and min (and wrt computational resources), I am not sure if gradient
+        optimization is the best idea. I have two ideas of finding or estimating the maximum point.
+        Ideas:
+        1. Estimation from uniform samples
+        - uniformly sample points across entire space and find point with maximum probability
+        2. Sum of directions
+        - sum all the scaled directions between every mean and the center
+        - this is more like a "walk" over the space
+        - this raises the question of whether the center (0, 0) is the best starting point?
+        Args:
+        - self properties
+            - call function used to predict mean predictions and sigma predictions of all features
+        - x, features to predict from
+        Returns:
+        - coordinate (x, y) of highest probability
+        - scaled probability density output at that coordinate
+
+        # Get mean and sigma predictions
+        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
+
+        # Create 2d normal distributions with every pair of mean and sigma predictions
+        distributions = [
+            multivariate_normal(mu, sigma) for mu, sigma in zip(mean_preds, sigma_preds)
+        ]
+
+        # Idea 1: Estimation from uniform samples
+        # - find the "box" that contains all means
+        # - uniformly sample points over the box
+        # - calculate the summed PDF at every point
+        # - find coordinate of maximum value
+
+        # Bottom left corner
+        bottom_left_coordinate = tf.reduce_min(mean_preds, axis=0)
+
+        # Top right corner
+        top_right_coordinate = tf.reduce_max(mean_preds, axis=0)
 
 
+        # Sample grid coordinates of the box 
+        nx, ny = (10, 10)
+
+        x_space = tf.linspace(bottom_left_coordinate[0], top_right_coordinate[0], nx)
+        y_space = tf.linspace(bottom_left_coordinate[1], top_right_coordinate[1], ny)
+
+        X, Y = tf.meshgrid(x_space, y_space)
+
+        mesh_coords = tf.reshape(tf.concat([X[..., tf.newaxis], Y[..., tf.newaxis]], axis = -1), (-1, 2))
+
+        # Sum probability density of each coordinate for every distribution based on each feature prediction
+        pdf_scores = tf.zeros((tf.shape(mesh_coords)[0], ), dtype = tf.float32)
+
+        for dist in distributions:
+            pdf_scores += dist.pdf(mesh_coords)
+        
+        return mesh_coords[tf.argmax(pdf_scores, axis = 0)], (tf.reduce_max(pdf_scores) / tf.reduce_sum(pdf_scores))
+
+
+        # Idea 2: Sum of directions
+        # - calculate all vector directions between every mean and the center
+        # - scale each direction based on the std of the distribution that is pointed TOWARDS (simulating "pull" of distribution)
+        # - sum all directions
+
+    def normal_cdf(x, mu, sigma):
+        return 0.5 * (1. + erf((x - mu) / (sigma * (2 ** 0.5))))
+    """
+
+
+
+class FeatureDistributionModel2(tf.keras.Model):
+
+    def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, name="feature_distribution_model"):
+        
+        self.name = name
+        self.num_clusters = 5
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+
+        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size, num_layers=num_layers)
+
+        self.loss = MeanNormalHaversineDistanceLoss()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+
+    def call(self, x):
+        x = self.vgg(x)
+
+        print(x.shape)
+
+        return tf.zeros(x.shape[0])
+
+    def predict(self, x):
+        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
+        mean_preds, sigma_preds = mean_preds.numpy(), sigma_preds.numpy()
+
+        centers = []
+        for mean, sigma in zip(mean_preds, sigma_preds):
+            kmeans = KMeans(n_clusters=self.num_clusters, n_init='auto')
+            kmeans.fit(mean)
+
+            cluster_totals = np.sum(np.eye(self.num_clusters)[kmeans.labels_], axis=1)
+
+            centers.append(kmeans.cluster_centers_[np.argmax(cluster_totals)])
+        
+        return np.array(centers)
 
     
 
