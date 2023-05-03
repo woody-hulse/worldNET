@@ -22,7 +22,7 @@ def print_results(models, test_data, test_labels, metrics):
     for model, data in zip(models, test_data):
         table.append([])
         for metric in metrics:
-            table[-1].append(metric(test_labels, model.call(data)).numpy())
+            table[-1].append(metric(test_labels[:data.shape[0]], model.call(data)).numpy())
     
     table_df = pd.DataFrame(
         data=table, 
@@ -34,29 +34,31 @@ def print_results(models, test_data, test_labels, metrics):
     print()
 
 
-def train_model(model, train_data, train_labels, test_data=[], test_labels=[], epochs=10, batch_size=16, summary=False):
+def train_model(model, train_data, train_labels, test_data=[], test_labels=[], epochs=10, batch_size=16, summary=False, compile=True):
     """
     train a model
     """
 
     print("\ntraining", model.name, "...")
 
-    model.compile(optimizer=model.optimizer, loss=model.loss, metrics=[])
-    model.build(train_data.shape)
+    if compile:
+        model.compile(optimizer=model.optimizer, loss=model.loss, metrics=[])
+        model.build(train_data.shape)
     if summary:
         model.summary()
     model.fit(train_data, train_labels, batch_size=batch_size, epochs=epochs, validation_data=(test_data, test_labels))
 
 
-def train_distribution_model(model, train_data, train_labels, test_data=[], test_labels=[], epochs=10, batch_size=16, summary=False, downsampling=4, verbose=1):
+def train_distribution_model(model, train_data, train_labels, test_data=[], test_labels=[], epochs=10, batch_size=16, summary=False, downsampling=4, verbose=1, compile=True):
     """
     train a distribution model with mu, sigma outputs
     """
 
     print("\ntraining", model.name, "...")
 
-    model.compile(optimizer=model.optimizer, loss=model.loss, metrics=[])
-    model.build(train_data.shape)
+    if compile:
+        model.compile(optimizer=model.optimizer, loss=model.loss, metrics=[])
+        model.build(train_data.shape)
     if summary:
         model.summary()
 
@@ -119,10 +121,11 @@ def train_distribution_model(model, train_data, train_labels, test_data=[], test
 
 
 
-def main(save=True, load=False):
+def main(save=True, load=False, train=True, load_model=False, save_model=True):
 
     data_path = "data/"
     features_path = "features/"
+    weights_path = "weights/"
     
     if load:
         images, labels, cities = preprocessing.load_data(data_path)
@@ -130,6 +133,7 @@ def main(save=True, load=False):
         features = np.load(features_path + "features.npy")
     else:
         images, labels, cities = preprocessing.load_random_data()
+        features = preprocessing.pass_through_VGG(images)
     if save:
         print("\nsaving data to", data_path, "...")
         preprocessing.remove_files(data_path + "*")
@@ -138,12 +142,15 @@ def main(save=True, load=False):
         print("\nsaving features to", features_path, "...")
         np.save(features_path + "features", features)
 
-    grouped_features, grouped_feature_labels, grouped_feature_cities = preprocessing.reshape_grouped_features(features, labels, cities)
-    features, feature_labels, feature_cities = preprocessing.reshape_features(features, labels, cities)
-    features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
+    images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
+    features, feature_labels, feature_cities = preprocessing.shuffle_data(features, labels, cities)
+
+    grouped_features, grouped_feature_labels, grouped_feature_cities = preprocessing.reshape_grouped_features(features, feature_labels, feature_cities)
+    features, feature_labels, feature_cities = preprocessing.reshape_features(features, feature_labels, feature_cities)
+    # features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
 
     feature_labels = preprocessing.normalize_labels(feature_labels)
-    grouped_feature_labels = preprocessing.normalize_labels(preprocessing.group_feature_labels(feature_labels))
+    grouped_feature_labels = preprocessing.group_feature_labels(feature_labels)
 
     # preprocessing.plot_features(features, 6)
 
@@ -152,6 +159,14 @@ def main(save=True, load=False):
     train_images, test_images = preprocessing.train_test_split(images)
     train_labels, test_labels = preprocessing.train_test_split(labels)
     train_cities, test_cities = preprocessing.train_test_split(cities)
+
+    train_features, test_features = preprocessing.train_test_split(features)
+    train_feature_labels, test_feature_labels = preprocessing.train_test_split(feature_labels)
+    train_feature_cities, test_feature_cities = preprocessing.train_test_split(feature_cities)
+
+    train_grouped_features, test_grouped_features = preprocessing.train_test_split(grouped_features)
+    train_grouped_labels, test_grouped_labels = preprocessing.train_test_split(grouped_feature_labels)
+    train_grouped_cities, test_grouped_cities = preprocessing.train_test_split(grouped_feature_cities)
 
     """
     plt.scatter(train_labels[:, 0], train_labels[:, 1])
@@ -164,15 +179,31 @@ def main(save=True, load=False):
     plt.show()
     """
 
-    train_features, test_features = preprocessing.train_test_split(features)
-    train_feature_labels, test_feature_labels = preprocessing.train_test_split(feature_labels)
-    train_feature_cities, test_feature_cities = preprocessing.train_test_split(feature_cities)
-
-    train_grouped_features, test_grouped_features = preprocessing.train_test_split(grouped_features)
-    train_grouped_labels, test_grouped_labels = preprocessing.train_test_split(grouped_feature_labels)
+    test_model = models.createInceptionModel(input_shape=images.shape[1:])
+    test_model_weights_path = weights_path + "test.h5"
+    test_model.compile(optimizer=tf.keras.optimizers.Adam(0.01), loss=models.MeanHaversineDistanceLoss(), metrics=[])
+    test_model.build(train_images.shape)
+    if load_model:
+        print("\nloading test model from", test_model_weights_path, "...")
+        test_model.load_weights(test_model_weights_path)
+    if True:
+        train_model(test_model, train_images, train_labels, test_images, test_labels, epochs=1, batch_size=64, summary=True, compile=False)
+    if save_model:
+        print("\nsaving test model to", test_model_weights_path, "...")
+        test_model.save_weights(test_model_weights_path)
 
     worldNET = models.worldNET(hidden_size=64, num_layers=3, input_shape=images.shape[1:])
-    train_model(worldNET.feature_distribution_model, train_images, train_grouped_labels, test_images, test_grouped_labels, epochs=4, batch_size=32, summary=True)
+    worldNET_weights_path = weights_path + "worldNET.h5"
+    worldNET.feature_distribution_model.compile(optimizer=worldNET.feature_distribution_model.optimizer, loss=worldNET.feature_distribution_model.loss, metrics=[])
+    worldNET.feature_distribution_model.build(train_images.shape)
+    if load_model:
+        print("\nloading worldNET model from", worldNET_weights_path, "...")
+        worldNET.feature_distribution_model.load_weights(worldNET_weights_path)
+    if train:
+        train_model(worldNET.feature_distribution_model, train_images, train_grouped_labels, test_images, test_grouped_labels, epochs=1, batch_size=64, summary=True, compile=False)
+    if save_model:
+        print("\nsaving worldNET model to", worldNET_weights_path, "...")
+        worldNET.feature_distribution_model.save_weights(worldNET_weights_path)
 
     feature_model = models.FeatureDistributionModel(hidden_size=64, num_layers=4)
     train_distribution_model(feature_model.feature_distribution_nn, train_features, train_feature_labels, test_features, test_feature_labels, epochs=4, batch_size=128, downsampling=32, verbose=2, summary=True)
@@ -205,10 +236,10 @@ def main(save=True, load=False):
     randomized_guess_model = models.RandomizedGuessModel()
 
     print_results([simple_nn_model, mean_model, guess_model, randomized_guess_model, feature_model, naive_vgg_model, worldNET], 
-                  [test_images, test_images, test_images, test_images, test_grouped_features, test_grouped_features, test_images], 
+                  [test_images, test_images, test_images, test_images, test_grouped_features, test_grouped_features, test_images[:64]], 
                   test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
 
 
 if __name__ == "__main__":
     os.system("clear")
-    main(save=False, load=True)
+    main(save=False, load=True, train=False, load_model=True, save_model=True)
