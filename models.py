@@ -2,6 +2,9 @@ import tensorflow as tf
 import numpy as np
 from math import erf
 from scipy.stats import multivariate_normal
+import scipy
+import skimage
+import sklearn
 import random
 from tqdm import tqdm
 from sklearn.cluster import KMeans
@@ -688,7 +691,6 @@ def createInceptionModel(input_shape):
 
 class FeatureNearestNeighbors():
 
-
     """
     
     TODO
@@ -743,4 +745,83 @@ class FeatureNearestNeighbors():
                     self.vectors.append(feature.flatten())
                     self.labels.append(label)
                 pbar.update(1)
+
+
+    def build_vocabulary(image_paths, vocab_size):
+        ppc = 16
+        cpb = 2
+
+        num_imgs = len(image_paths)
+        total_fds = np.empty((0, cpb*cpb*9))
+
+        for i in range(num_imgs):
+            img = skimage.io.imread(image_paths[i], as_gray=True)
+            fd_mat = skimage.feature.hog(img, pixels_per_cell=(ppc, ppc), cells_per_block=(cpb, cpb), feature_vector=True)
+            hog_fds = fd_mat.reshape(-1, cpb*cpb*9)
+            total_fds = np.append(total_fds, hog_fds, axis=0)
+
+        kmeans = sklearn.cluster.MiniBatchKMeans(n_clusters=vocab_size, max_iter=100).fit(total_fds)
+
+        return kmeans.cluster_centers_
+
+    def get_bags_of_words(image_paths, vocab):
+        ppc = 16
+        cpb = 2
+
+        hist_size = vocab.shape[0]
+        img_hists = np.empty((0, hist_size))
+
+        for i in range(len(image_paths)):
+            img_hist = np.zeros((1, hist_size)) 
+            img = skimage.io.imread(image_paths[i], as_gray=True)
+            fd_mat = skimage.feature.hog(img, pixels_per_cell=(ppc, ppc), cells_per_block=(cpb, cpb), feature_vector=True)
+            hog_fds = fd_mat.reshape(-1, cpb*cpb*9)
+
+            dists = scipy.spatial.distance.cdist(hog_fds, vocab, "euclidean")
+            inds = np.argsort(dists, axis=1)[:, 0]
+            for j in range(len(inds)):
+                img_hist[0][inds[j]] += 1
+            img_hist[0] = img_hist[0] / np.linalg.norm(img_hist[0])
+            img_hists = np.append(img_hists, img_hist, axis=0)
+        
+        return img_hists
+    
+        '''
+        general idea:
+
+                store all or some of the training feature vectors and their corresponding latitude/longitude label
+                for each example in a testing dataset:
+                    find the k nearest neighbors (with either euclidian or cosine or some other similarity metric)
+                    compute the weighted mean of their locations
+                    compute the weighted standard deviation of their locations
+                    return this mean and standard deviation
+        '''
+
+    def calc_mean(labels, dists):
+        # labels shape: (x, 2)
+        # dists shape: (x, k)
+        # x = number of test images
+        weighted_x = np.sum(labels[0] * dists, axis=1) / np.sum(dists, axis=1)
+        weighted_y = np.sum(labels[1] * dists, axis=1) / np.sum(dists, axis=1)
+        return weighted_x, weighted_y
+    
+    def calc_sd(dists, k):
+        # means shape: (x, 1)
+        # dists shape: (x, k)
+        # x = number of test images
+        weighted_sd = np.sqrt(np.sum((dists ** 2), axis=1) / k)
+        return weighted_sd
+
+    def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats):
+        
+        k = 100
+
+        dists = scipy.spatial.distance.cdist(test_image_feats, train_image_feats, 'euclidean')
+        k_inds = np.argsort(dists, axis=1)[:, :k]
+        k_labels = np.take(train_labels, k_inds)
+        k_dists = np.take(dists, k_inds)
+        weighted_m_x, weighted_m_y = calc_mean(k_labels, k_dists)
+        weighted_sd = calc_sd(k_dists, k)
+
+        return weighted_m_x, weighted_m_y, weighted_sd
     
