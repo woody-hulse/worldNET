@@ -747,7 +747,7 @@ class FeatureNearestNeighbors():
                 pbar.update(1)
 
 
-    def build_vocabulary(image_paths, vocab_size):
+    def build_vocabulary(self, image_paths, vocab_size):
         ppc = 16
         cpb = 2
 
@@ -764,7 +764,7 @@ class FeatureNearestNeighbors():
 
         return kmeans.cluster_centers_
 
-    def get_bags_of_words(image_paths, vocab):
+    def get_bags_of_words(self, image_paths, vocab):
         ppc = 16
         cpb = 2
 
@@ -797,22 +797,26 @@ class FeatureNearestNeighbors():
                     return this mean and standard deviation
         '''
 
-    def calc_mean(labels, dists):
+    def calc_mean(self, labels, dists):
         # labels shape: (x, 2)
         # dists shape: (x, k)
         # x = number of test images
-        weighted_x = np.sum(labels[0] * dists, axis=1) / np.sum(dists, axis=1)
-        weighted_y = np.sum(labels[1] * dists, axis=1) / np.sum(dists, axis=1)
+        plt.scatter(labels[:, 0], labels[:, 1])
+        plt.ylim(0, 1)
+        plt.xlim(0, 1)
+        plt.show()
+        weighted_x = np.sum(labels[:, 0] * dists, axis=1) / np.sum(dists, axis=1)
+        weighted_y = np.sum(labels[:, 1] * dists, axis=1) / np.sum(dists, axis=1)
         return weighted_x, weighted_y
     
-    def calc_sd(dists, k):
+    def calc_sd(self, dists, k):
         # means shape: (x, 1)
         # dists shape: (x, k)
         # x = number of test images
         weighted_sd = np.sqrt(np.sum((dists ** 2), axis=1) / k)
         return weighted_sd
 
-    def nearest_neighbor_classify(train_image_feats, train_labels, test_image_feats):
+    def nearest_neighbor_classify(self, train_image_feats, train_labels, test_image_feats):
         
         k = 100
 
@@ -820,8 +824,11 @@ class FeatureNearestNeighbors():
         k_inds = np.argsort(dists, axis=1)[:, :k]
         k_labels = np.take(train_labels, k_inds)
         k_dists = np.take(dists, k_inds)
-        weighted_m_x, weighted_m_y = calc_mean(k_labels, k_dists)
-        weighted_sd = calc_sd(k_dists, k)
+        weighted_m_x, weighted_m_y = self.calc_mean(k_labels, k_dists)
+        weighted_sd = self.calc_sd(k_dists, k)
 
         return weighted_m_x, weighted_m_y, weighted_sd
     
+    def call(self, features):
+        pass
+        # return self.nearest_neighbor_classify(_, _, _)

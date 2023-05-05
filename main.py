@@ -147,10 +147,10 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
 
     grouped_features, grouped_feature_labels, grouped_feature_cities = preprocessing.reshape_grouped_features(features, feature_labels, feature_cities)
     features, feature_labels, feature_cities = preprocessing.reshape_features(features, feature_labels, feature_cities)
-    # features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
 
     feature_labels = preprocessing.normalize_labels(feature_labels)
     grouped_feature_labels = preprocessing.group_feature_labels(feature_labels)
+    features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
 
     # preprocessing.plot_features(features, 6)
 
@@ -179,6 +179,10 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     plt.show()
     """
 
+    nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
+    lat, long, std = nearest_neighbors_model.nearest_neighbor_classify(train_features[:10000], train_feature_labels[:10000], test_features[:100])
+    print(models.MeanHaversineDistanceLoss()(test_feature_labels[:100], np.stack([lat, long]).T))
+
     test_model = models.createInceptionModel(input_shape=images.shape[1:])
     test_model_weights_path = weights_path + "test.h5"
     test_model.compile(optimizer=tf.keras.optimizers.Adam(0.01), loss=models.MeanHaversineDistanceLoss(), metrics=[])
@@ -186,7 +190,7 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     if load_model:
         print("\nloading test model from", test_model_weights_path, "...")
         test_model.load_weights(test_model_weights_path)
-    if True:
+    if train:
         train_model(test_model, train_images, train_labels, test_images, test_labels, epochs=1, batch_size=64, summary=True, compile=False)
     if save_model:
         print("\nsaving test model to", test_model_weights_path, "...")
