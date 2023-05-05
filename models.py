@@ -186,6 +186,7 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
 class NaiveVGG(tf.keras.Model):
     def __init__(self, 
             units		= 512, 				# number of units in each dense layer
+            input_shape = (300, 400, 3),
             layers		= 2, 				# number of dense layers
             dropout		= 0.2, 				# dropout proportion per dense layer
             output_units= 2, 				# number of units in output dense layer
@@ -193,6 +194,14 @@ class NaiveVGG(tf.keras.Model):
         ):		
         
         super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
 
         self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
         self.head = [
@@ -204,8 +213,9 @@ class NaiveVGG(tf.keras.Model):
         self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
-    def call(self, features):
-        x = self.flatten_layer(features)
+    def call(self, x):
+        x = self.vgg(x)
+        x = self.flatten_layer(x)
         for dense_layer, dropout_layer in self.head:
             x = dense_layer(x)
             x = dropout_layer(x)
@@ -801,10 +811,6 @@ class FeatureNearestNeighbors():
         # labels shape: (x, 2)
         # dists shape: (x, k)
         # x = number of test images
-        plt.scatter(labels[:, 0], labels[:, 1])
-        plt.ylim(0, 1)
-        plt.xlim(0, 1)
-        plt.show()
         weighted_x = np.sum(labels[:, 0] * dists, axis=1) / np.sum(dists, axis=1)
         weighted_y = np.sum(labels[:, 1] * dists, axis=1) / np.sum(dists, axis=1)
         return weighted_x, weighted_y

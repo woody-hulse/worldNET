@@ -129,28 +129,32 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     
     if load:
         images, labels, cities = preprocessing.load_data(data_path)
-        print("\nloading features from", features_path, "...")
-        features = np.load(features_path + "features.npy")
+        # print("\nloading features from", features_path, "...")
+        # features = np.load(features_path + "features.npy")
     else:
-        images, labels, cities = preprocessing.load_random_data()
-        features = preprocessing.pass_through_VGG(images)
+        images, labels, cities = preprocessing.load_random_data(num_per_city=200)
+        images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
+        images, labels, cities = preprocessing.uniform_geographic_distribution(images, labels, cities, radius=10, maximum=200)
+        # features = preprocessing.pass_through_VGG(images)
+        # features = np.load(features_path + "features.npy")
     if save:
         print("\nsaving data to", data_path, "...")
         preprocessing.remove_files(data_path + "*")
         preprocessing.save_data(images, labels, cities, data_path)
 
-        print("\nsaving features to", features_path, "...")
-        np.save(features_path + "features", features)
+        # print("\nsaving features to", features_path, "...")
+        # np.save(features_path + "features", features)
 
-    images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
-    features, feature_labels, feature_cities = preprocessing.shuffle_data(features, labels, cities)
+    # images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
+    # features, feature_labels, feature_cities = preprocessing.shuffle_data(features, labels, cities)
 
-    grouped_features, grouped_feature_labels, grouped_feature_cities = preprocessing.reshape_grouped_features(features, feature_labels, feature_cities)
-    features, feature_labels, feature_cities = preprocessing.reshape_features(features, feature_labels, feature_cities)
+    # grouped_features, grouped_feature_labels, grouped_feature_cities = preprocessing.reshape_grouped_features(features, feature_labels, feature_cities)
+    # features, feature_labels, feature_cities = preprocessing.reshape_features(features, feature_labels, feature_cities)
 
-    feature_labels = preprocessing.normalize_labels(feature_labels)
-    grouped_feature_labels = preprocessing.group_feature_labels(feature_labels)
-    features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
+    # feature_labels = preprocessing.normalize_labels(feature_labels)
+
+    # grouped_feature_labels = preprocessing.group_feature_labels(feature_labels)
+    # features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
 
     # preprocessing.plot_features(features, 6)
 
@@ -160,13 +164,14 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     train_labels, test_labels = preprocessing.train_test_split(labels)
     train_cities, test_cities = preprocessing.train_test_split(cities)
 
-    train_features, test_features = preprocessing.train_test_split(features)
-    train_feature_labels, test_feature_labels = preprocessing.train_test_split(feature_labels)
-    train_feature_cities, test_feature_cities = preprocessing.train_test_split(feature_cities)
+    # train_features, test_features = preprocessing.train_test_split(features)
+    # train_feature_labels, test_feature_labels = preprocessing.train_test_split(feature_labels)
+    # train_feature_cities, test_feature_cities = preprocessing.train_test_split(feature_cities)
 
-    train_grouped_features, test_grouped_features = preprocessing.train_test_split(grouped_features)
+    # train_grouped_features, test_grouped_features = preprocessing.train_test_split(grouped_features)
+    grouped_feature_labels = preprocessing.expand_and_group_feature_labels(labels)
     train_grouped_labels, test_grouped_labels = preprocessing.train_test_split(grouped_feature_labels)
-    train_grouped_cities, test_grouped_cities = preprocessing.train_test_split(grouped_feature_cities)
+    # train_grouped_cities, test_grouped_cities = preprocessing.train_test_split(grouped_feature_cities)
 
     """
     plt.scatter(train_labels[:, 0], train_labels[:, 1])
@@ -179,10 +184,11 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     plt.show()
     """
 
-    nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
-    lat, long, std = nearest_neighbors_model.nearest_neighbor_classify(train_features[:10000], train_feature_labels[:10000], test_features[:100])
-    print(models.MeanHaversineDistanceLoss()(test_feature_labels[:100], np.stack([lat, long]).T))
+    # nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
+    # lat, long, std = nearest_neighbors_model.nearest_neighbor_classify(train_features[:10000], train_feature_labels[:10000], test_features[:100])
+    # print(models.MeanHaversineDistanceLoss()(test_feature_labels[:100], np.stack([lat, long]).T))
 
+    """
     test_model = models.createInceptionModel(input_shape=images.shape[1:])
     test_model_weights_path = weights_path + "test.h5"
     test_model.compile(optimizer=tf.keras.optimizers.Adam(0.01), loss=models.MeanHaversineDistanceLoss(), metrics=[])
@@ -195,6 +201,7 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     if save_model:
         print("\nsaving test model to", test_model_weights_path, "...")
         test_model.save_weights(test_model_weights_path)
+    """
 
     worldNET = models.worldNET(hidden_size=64, num_layers=3, input_shape=images.shape[1:])
     worldNET_weights_path = weights_path + "worldNET.h5"
@@ -209,8 +216,11 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
         print("\nsaving worldNET model to", worldNET_weights_path, "...")
         worldNET.feature_distribution_model.save_weights(worldNET_weights_path)
 
-    feature_model = models.FeatureDistributionModel(hidden_size=64, num_layers=4)
-    train_distribution_model(feature_model.feature_distribution_nn, train_features, train_feature_labels, test_features, test_feature_labels, epochs=4, batch_size=128, downsampling=32, verbose=2, summary=True)
+    vgg_feature_model = models.VGGFeatureDistributionModel(input_shape=images.shape[1:], hidden_size=16, num_layers=3)
+    train_model(vgg_feature_model, train_images[:1000], train_grouped_labels[:1000], test_images, test_grouped_labels, epochs=4, batch_size=256, summary=True)
+
+    # feature_model = models.FeatureDistributionModel(hidden_size=64, num_layers=4)
+    # train_distribution_model(feature_model.feature_distribution_nn, train_features, train_feature_labels, test_features, test_feature_labels, epochs=4, batch_size=128, downsampling=32, verbose=2, summary=True)
 
 
     """
@@ -226,11 +236,11 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     plt.show()
     """
 
-    naive_vgg_model = models.NaiveVGG(units=8, output_units=2, layers=1)
-    train_model(naive_vgg_model, train_grouped_features, train_labels, test_grouped_features, test_labels, epochs=1, batch_size=16)
+    naive_vgg_model = models.NaiveVGG(units=8, output_units=2, layers=1, input_shape=images.shape[1:])
+    train_model(naive_vgg_model, train_images, train_labels, test_images, test_labels, epochs=1, batch_size=32)
 
     simple_nn_model = models.SimpleNN(output_units=2, name="simple_nn")
-    train_model(simple_nn_model, train_images, train_labels, test_images, test_labels, epochs=4, batch_size=16)
+    train_model(simple_nn_model, train_images, train_labels, test_images, test_labels, epochs=4, batch_size=32)
 
     # nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
     # train_model(nearest_neighbors_model, train_images, train_labels, batch_size=16, epochs=4, validation_data=(test_images, test_labels))
@@ -239,11 +249,11 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     guess_model = models.GuessModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
     randomized_guess_model = models.RandomizedGuessModel()
 
-    print_results([simple_nn_model, mean_model, guess_model, randomized_guess_model, feature_model, naive_vgg_model, worldNET], 
-                  [test_images, test_images, test_images, test_images, test_grouped_features, test_grouped_features, test_images[:64]], 
+    print_results([simple_nn_model, mean_model, guess_model, randomized_guess_model, naive_vgg_model, worldNET], 
+                  [test_images, test_images, test_images, test_images, test_images, test_images[:64]], 
                   test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
 
 
 if __name__ == "__main__":
     os.system("clear")
-    main(save=False, load=True, train=False, load_model=True, save_model=True)
+    main(save=False, load=False, train=False, load_model=False, save_model=True)

@@ -5,6 +5,7 @@ import pandas as pd
 import tensorflow as tf
 from PIL import Image
 from tqdm import tqdm
+import scipy
 import glob
 
 import matplotlib
@@ -35,12 +36,78 @@ DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
 
 
+def uniform_geographic_distribution(images, labels, cities, radius=10, maximum=100):
+    """
+    remove image/label/cities from dense areas
+    """
+
+    print("\nfiltering", len(images), "images for uniform distribution ...")
+
+    print_city_distribution(cities, cities)
+
+    num_images = len(images)
+    kdtree = scipy.spatial.cKDTree(labels)
+    remove_indices = set()
+    remove_labels = [[0, 0]]
+    remove_kdtree = scipy.spatial.cKDTree(remove_labels)
+    with tqdm(total=len(images)) as pbar:
+        for i, label in enumerate(labels):
+            indices = kdtree.query_ball_point(label, radius)
+            indices_ = remove_kdtree.query_ball_point(label, radius)
+            if len(indices) - len(indices_) > maximum:
+                remove_indices.add(i)
+                remove_labels.append(label)
+                remove_kdtree = scipy.spatial.cKDTree(remove_labels)
+            pbar.update(1)
+
+    new_images, new_labels, new_cities = [], [], []
+    for i in tqdm(range(num_images)):
+        if i not in remove_indices:
+            new_images.append(images[i])
+            new_labels.append(labels[i])
+            new_cities.append(cities[i])
+    new_images = np.stack(new_images)
+    new_labels = np.stack(new_labels)
+    new_cities = np.stack(new_cities)
+
+    print(num_images, "->", len(new_images))
+    print_city_distribution(cities, new_cities)
+
+    return new_images, new_labels, new_cities
+
+
+def print_city_distribution(index_cities, cities):
+    """
+    prints table of images in each city
+    """
+    index_cities = list(set(index_cities))
+    cities = list(cities)
+    counts = [cities.count(index_city) for index_city in index_cities]
+
+    df = pd.DataFrame(counts, index=index_cities, columns=["count"])
+    print()
+    print(df)
+    print()
+
+
 def group_feature_labels(labels, num_features=512):
     """
     groups every 512 feature labels
     """
 
     return labels.reshape(-1, num_features, labels.shape[1])
+
+
+def expand_and_group_feature_labels(labels, num_features=512):
+    """
+    expands and groups feature labels
+    """
+
+    grouped_labels = []
+    for label in labels:
+        grouped_labels.append([label] * num_features)
+
+    return np.array(grouped_labels)
 
 
 def shuffle_data(images, labels, cities):
