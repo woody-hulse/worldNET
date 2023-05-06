@@ -102,11 +102,10 @@ class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
         c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
-        distance = earth_radius * c
 
-        mean_distance = tf.reduce_mean(distance)
+        distance = tf.reduce_mean(c * earth_radius)
 
-        return mean_distance
+        return distance
     
 
 class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
@@ -118,6 +117,7 @@ class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
 
+        y_pred_norm = y_pred
         y_true = preprocessing.unnormalize_labels(y_true)
         y_pred = preprocessing.unnormalize_labels(y_pred)
 
@@ -133,13 +133,18 @@ class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
         dlat = lat2_rad - lat1_rad
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
-        c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
 
-        lmbda = 0.1
-        mean_distance = tf.reduce_mean(c)
-        mean_std_pred = tf.math.reduce_mean(tf.math.reduce_std(y_pred, axis=0))
+        lmbda1 = 3
+        lmbda2 = 0.002
+        epsilon = 1e-5
+        c = tf.pow(2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a)), 4)
+        c = tf.reduce_mean(c)
+        # center_penalty = tf.reduce_mean(tf.square(y_pred_norm - tf.constant(np.full(y_pred_norm.shape, 0.5), dtype=tf.float32)))
+        var_penalty = 1 / (tf.reduce_mean(tf.math.reduce_variance(y_pred_norm, axis=0)) + epsilon)
 
-        return mean_distance + 1 / mean_std_pred * lmbda
+        loss = c # + var_penalty * lmbda2 # + center_penalty * lmbda1
+
+        return loss
     
 
 class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
@@ -308,22 +313,21 @@ class FeatureDistributionNN(tf.keras.Model):
 
         super().__init__(name=name)
 
-        self.dense_layers = [
-            tf.keras.layers.Dense(hidden_size, activation="relu") for _ in range(num_layers)
-        ]
-        self.mu_layer = tf.keras.layers.Dense(2, activation="sigmoid")
-        self.sigma_layer = tf.keras.layers.Dense(1, activation="sigmoid")
+        self.dense_layers = []
 
-        self.loss = MeanNormalHaversineDistanceLoss()
-        self.optimizer = tf.keras.optimizers.Adam(0.004)
+        for layer in range(num_layers):
+            self.dense_layers.append(tf.keras.layers.Dense(hidden_size, activation="leaky_relu", kernel_initializer=tf.keras.initializers.GlorotUniform()))
+            self.dense_layers.append(tf.keras.layers.Dropout(0.7))
+        self.mu_layer = tf.keras.layers.Dense(2, activation="sigmoid", kernel_initializer=tf.keras.initializers.GlorotUniform())
+
+        self.loss = SpreadMeanHaversineDistanceLoss()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
     
     def call(self, x):
         for layer in self.dense_layers:
             x = layer(x)
-            x = tf.keras.layers.Dropout(0.1)(x)
         mu = self.mu_layer(x)
-        sigma = self.sigma_layer(x)
-        return mu, sigma
+        return mu
     
 
 
@@ -349,11 +353,14 @@ class FeatureDistributionModel():
 
 
     def call(self, x):
-        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
-        mean_preds, sigma_preds = mean_preds.numpy(), sigma_preds.numpy()
+        mean_preds = self.feature_distribution_nn.call(x)
+        mean_preds = mean_preds.numpy()
+
+        plt.scatter(mean_preds[0, :, 1], mean_preds[0, :, 0])
+        plt.show()
 
         centers = []
-        for mean, sigma in zip(mean_preds, sigma_preds):
+        for mean in mean_preds:
             kmeans = KMeans(n_clusters=self.num_clusters, n_init='auto')
             kmeans.fit(mean)
 
@@ -450,9 +457,11 @@ class VGGFeatureDistributionModel(tf.keras.Model):
             pooling=None,
         )
 
+        # self.vgg.trainable = False
+
         self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size, num_layers=num_layers)
 
-        self.loss = MeanHaversineDistanceLoss()
+        self.loss = SpreadMeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
 
@@ -460,7 +469,7 @@ class VGGFeatureDistributionModel(tf.keras.Model):
         x = self.vgg(x)
         x = tf.transpose(x, perm=[0, 3, 1, 2])
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        mu, sigma = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
+        mu = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
         return mu
         
 
@@ -512,7 +521,7 @@ class worldNET():
 
         self.feature_distribution_model = VGGFeatureDistributionModel(input_shape, hidden_size, num_layers)
 
-        self.loss = MeanHaversineDistanceLoss()
+        self.loss = SpreadMeanHaversineDistanceLoss()
     
     def call(self, x):
 

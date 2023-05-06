@@ -36,6 +36,61 @@ DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
 
 
+def plot_points(points_list, image_path, colors=['r'], density_map=False, normalize_points=False):
+    """
+    plots points over an image
+    """
+
+    print("plotting points ...")
+
+    if normalize_points:
+        normalized_points_list = []
+        for points in points_list:
+            normalized_points_list.append(normalize_labels(points))
+        points_list = normalized_points_list
+
+    with Image.open(image_path) as image:
+        plt.imshow(image, origin="upper")
+        image = np.array(image)
+        width, height, _ = image.shape
+        for points, color in zip(points_list, colors):
+            x, y = points[:, 1] * width, height - points[:, 0] * height
+            if density_map and len(points_list) == 1:
+                plot_density_map(np.array([x, y]).T, image, r=50, grad=10)
+            else:
+                plt.scatter(x, y, c=color)
+        plt.grid(False)
+        plt.axis('off')
+        plt.xlim(0, image.shape[1])
+        plt.ylim(image.shape[0], 0)
+        plt.show()
+
+
+def plot_density_map(points, image, r, grad=5):
+    x_min, y_min = 0, 0
+    x_max, y_max = image.shape[0], image.shape[1]
+    n_bins = 500
+    x_bins = np.linspace(x_min, x_max, n_bins)
+    y_bins = np.linspace(y_min, y_max, n_bins)
+    xx, yy = np.meshgrid(x_bins, y_bins)
+
+    density = np.zeros((n_bins, n_bins))
+    kdtree = scipy.spatial.cKDTree(points)
+    for i in tqdm(range(n_bins)):
+        for j in range(n_bins):
+            for g in range(1, grad):
+                indices = kdtree.query_ball_point([xx[i, j], yy[i, j]], r * (g / grad))
+                density[i, j] += len(indices)
+
+    density = density / np.max(density)
+    heatmap = np.empty((n_bins, n_bins, 4))
+    heatmap[:] = np.array([1, 0, 0, 0])
+    heatmap[:, :, 3] = density
+
+    plt.imshow(heatmap, extent=[x_min, x_max, y_min, y_max], cmap="hot", origin="lower", alpha=0.8)
+    plt.colorbar()
+
+
 def uniform_geographic_distribution(images, labels, cities, radius=10, maximum=100):
     """
     remove image/label/cities from dense areas
