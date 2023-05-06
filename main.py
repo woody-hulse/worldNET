@@ -246,4 +246,4 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
 
 if __name__ == "__main__":
     os.system("clear")
-    main(save=False, load=True, train=False, load_model=True, save_model=True)
+    main(save=True, load=False, train=False, load_model=True, save_model=True)

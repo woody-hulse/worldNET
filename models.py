@@ -7,7 +7,7 @@ import skimage
 import sklearn
 import random
 from tqdm import tqdm
-from sklearn.cluster import KMeans
+from sklearn.cluster import KMeans, MeanShift
 
 import matplotlib
 matplotlib.use("tkagg")
@@ -801,13 +801,25 @@ class FeatureNearestNeighbors():
         # labels shape: (x, 2)
         # dists shape: (x, k)
         # x = number of test images
-        plt.scatter(labels[:, 0], labels[:, 1])
+        plt.scatter(labels)
         plt.ylim(0, 1)
         plt.xlim(0, 1)
         plt.show()
-        weighted_x = np.sum(labels[:, 0] * dists, axis=1) / np.sum(dists, axis=1)
-        weighted_y = np.sum(labels[:, 1] * dists, axis=1) / np.sum(dists, axis=1)
-        return weighted_x, weighted_y
+        # weighted_m = np.sum(labels * dists, axis=1) / np.sum(dists, axis=1)
+        
+        weighted_m_x = np.zeros((np.shape(labels)[0], 1))
+        weighted_m_y = np.zeros((np.shape(labels)[0], 1))
+        # loop through each training image
+        for i in range(np.shape(labels)[0]):
+            # create the mean shift model
+            ms = MeanShift()
+            # fit the model to the given training image's k nearest neighbors' coordinates
+            ms.fit(labels[i,:,:])
+            # [CHANGE THIS LATER] take the biggest cluster and return it's coordinates
+            weighted_m_x[i] = ms.cluster_centers_[0, 0][0]
+            weighted_m_y[i] = ms.cluster_centers_[0, 0][1]
+
+        return weighted_m_x, weighted_m_y
     
     def calc_sd(self, dists, k):
         # means shape: (x, 1)
@@ -819,11 +831,21 @@ class FeatureNearestNeighbors():
     def nearest_neighbor_classify(self, train_image_feats, train_labels, test_image_feats):
         
         k = 100
-
+        # finding the distances btwn each of the feature vectors
         dists = scipy.spatial.distance.cdist(test_image_feats, train_image_feats, 'euclidean')
+        # finding k nearest neighbors of vectors
         k_inds = np.argsort(dists, axis=1)[:, :k]
-        k_labels = np.take(train_labels, k_inds)
+
+        # extracting the k nearest neighbors x and y labels 
+        k_labels_x = np.take(train_labels[:, 0], k_inds)
+        k_labels_y = np.take(train_labels[:, 1], k_inds)
+        # k_labels shape: (x, k, 2) -> x training image features, k NN, 2 coordinates
+        k_labels = np.stack((k_labels_x, k_labels_y), axis=2)
+
+        # k nearest distances to the given training image
         k_dists = np.take(dists, k_inds)
+
+        # calculate the weighted means and standard deviations
         weighted_m_x, weighted_m_y = self.calc_mean(k_labels, k_dists)
         weighted_sd = self.calc_sd(k_dists, k)
 
