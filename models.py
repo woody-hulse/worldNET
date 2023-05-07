@@ -9,8 +9,8 @@ import random
 from tqdm import tqdm
 from sklearn.cluster import KMeans
 
-import matplotlib
-matplotlib.use("tkagg")
+# import matplotlib
+# matplotlib.use("tkagg")
 from matplotlib import pyplot as plt
 
 import preprocessing_gsv as preprocessing
@@ -188,6 +188,81 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
         return mean_c + 1 / (std_c + epsilon) + (1 / mean_sigma + mean_sigma) / 100
 
 
+class VGGCityFeaturesModel(tf.keras.Model):
+  def __init__(self, 
+            units		= 512,
+            input_shape = (300, 400, 3),
+            layers		= 1,
+            dropout		= 0.4,
+            output_units= 2,
+            name		= "vgg_feature_city"
+        ):		
+        
+        super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+
+        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=64, num_layers=4, output_units=output_units, output_activation="softmax")
+
+        self.loss = tf.keras.losses.CategoricalCrossentropy()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+  def call(self, x):
+      x = self.vgg(x)
+      x = tf.transpose(x, perm=[0, 3, 1, 2])
+      x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+      x = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
+      return x
+
+
+class VGGCityModel(tf.keras.Model):
+    def __init__(self, 
+            units		= 512,
+            input_shape = (300, 400, 3),
+            layers		= 2,
+            dropout		= 0.2,
+            output_units= 2,
+            name		= "vgg_city"
+        ):		
+        
+        super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+
+        self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
+        self.head = [
+            (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
+            tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")) for i in range(layers)
+        ]
+        self.output_layer = tf.keras.layers.Dense(output_units, name = f"{name}_output_dense", activation="softmax")
+
+        self.loss = tf.keras.losses.CategoricalCrossentropy()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+    def call(self, x):
+        x = self.vgg(x)
+        x = self.flatten_layer(x)
+        for dense_layer, dropout_layer in self.head:
+            x = dense_layer(x)
+            x = dropout_layer(x)
+        x = self.output_layer(x)
+
+        return x
+
+
+
 class NaiveVGG(tf.keras.Model):
     def __init__(self, 
             units		= 512, 				# number of units in each dense layer
@@ -309,7 +384,7 @@ class FeatureDistributionNN(tf.keras.Model):
     predicts the mean and standard deviation of location of features
     """
 
-    def __init__(self, hidden_size=8, num_layers=4, name="feature_distribution_nn"):
+    def __init__(self, hidden_size=8, num_layers=4, output_units=2, output_activation="sigmoid", name="feature_distribution_nn"):
 
         super().__init__(name=name)
 
@@ -318,7 +393,7 @@ class FeatureDistributionNN(tf.keras.Model):
         for layer in range(num_layers):
             self.dense_layers.append(tf.keras.layers.Dense(hidden_size, activation="leaky_relu", kernel_initializer=tf.keras.initializers.GlorotUniform()))
             self.dense_layers.append(tf.keras.layers.Dropout(0.7))
-        self.mu_layer = tf.keras.layers.Dense(2, activation="sigmoid", kernel_initializer=tf.keras.initializers.GlorotUniform())
+        self.mu_layer = tf.keras.layers.Dense(output_units, activation=output_activation, kernel_initializer=tf.keras.initializers.GlorotUniform())
 
         self.loss = SpreadMeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)

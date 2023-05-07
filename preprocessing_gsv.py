@@ -8,8 +8,8 @@ from tqdm import tqdm
 import scipy
 import glob
 
-import matplotlib
-matplotlib.use("tkagg")
+# import matplotlib
+# matplotlib.use("tkagg")
 from matplotlib import pyplot as plt
 
 """
@@ -34,6 +34,30 @@ publisher={Elsevier}
 
 DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
+
+
+def ohe_cities(cities):
+  """
+  converts cities to one-hot encoding
+  """
+
+  print(np.array(cities).shape)
+
+  unique_cities = []
+  cities_ind = []
+  for city in cities:
+    if city in unique_cities:
+      cities_ind.append(unique_cities.index(city))
+    else:
+      cities_ind.append(len(unique_cities))
+      unique_cities.append(city)
+  cities_ind = np.array(cities_ind)
+
+  ohe_cities = np.eye(len(unique_cities))[cities_ind]
+
+  print(ohe_cities.shape)
+
+  return ohe_cities
 
 
 def plot_points(points_list, image_path, colors=['r'], density_map=False, normalize_points=False):
@@ -238,8 +262,6 @@ def pass_through_VGG(images):
     print("\npassing image data through vgg ...")
 
     features = vgg.predict(images)
-
-    print(features.shape)
 
     return features
 
