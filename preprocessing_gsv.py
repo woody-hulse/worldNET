@@ -1,3 +1,4 @@
+# preprocessing_gsv.py
 import os
 import random
 import numpy as np
@@ -5,7 +6,10 @@ import pandas as pd
 import tensorflow as tf
 from PIL import Image
 from tqdm import tqdm
+import glob
 
+import matplotlib
+from matplotlib import pyplot as plt
 
 """
 
@@ -28,19 +32,139 @@ publisher={Elsevier}
 
 
 DATA_PATH = "../data/archive/"
+IMAGE_SHAPE = (300, 400)
 
 
-def pass_through_VGG(data):
+def group_feature_labels(labels, num_features=512):
+    """
+    groups every 512 feature labels
+    """
+
+    return labels.reshape(-1, num_features, labels.shape[1])
+
+
+def shuffle_data(images, labels, cities):
+    """
+    randomly shuffles data
+    """
+    
+    indices = np.arange(len(images))
+    np.random.shuffle(indices)
+
+    return images[indices], labels[indices], cities[indices]
+
+
+def remove_files(filepath):
+    """
+    removes all files from directory
+    """
+
+    files = glob.glob(filepath)
+    for f in files:
+        os.remove(f)
+
+
+def plot_features(features, num):
+    """
+    plots some number of features
+    """
+
+
+    indices = np.arange(len(features))
+    np.random.shuffle(indices)
+
+    for i in indices[:num]:
+        plt.imshow(features[i].reshape(9, 12))
+        plt.show()
+
+
+def normalize_labels(labels):
+    """
+    normalize degree angle of labels
+    """
+
+    nomarlized_labels = (labels + np.array([[90, 180]])) / np.array([[180, 360]])
+
+    return nomarlized_labels
+
+
+def unnormalize_labels(labels):
+    """
+    unnormalize degree angles of labels
+    """
+
+    unnormalized_labels = labels * np.array([[180, 360]]) - np.array([[90, 180]])
+
+    return unnormalized_labels
+
+def get_layer_model(vgg, layer):
+  layer = vgg.get_layer(layer)
+  return tf.keras.models.Model(
+    inputs=[vgg.input],
+    outputs=[layer.output]
+  )
+
+
+def pass_through_VGG(images):
+    """
+    passes input through vgg
+    """
+
+    print("\nloading vgg ...")
+
+    images = tf.image.resize(images, [images.shape[1] // 2, images.shape[2] // 2])
+
     vgg = tf.keras.applications.VGG19(
         include_top=False,
         weights="imagenet",
         input_tensor=None,
-        input_shape=data.shape[1:],
+        input_shape=images.shape[1:],
         pooling=None,
     )
-    
-    return vgg(data)
 
+    vgg_layer = get_layer_model(vgg, "block4_conv2")
+
+    print("\npassing image data through vgg ...")
+
+    features = vgg_layer.predict(images)
+
+    print(features.shape)
+
+    return features
+
+
+def reshape_features(image_features, labels, cities):
+    """
+    reformats feature data to link individual features to labels
+    """
+    feature_vectors = []
+    feature_labels = []
+    feature_cities = []
+
+    print("\nreshaping features ...")
+    image_features = np.transpose(image_features, axes=[0, 3, 1, 2])
+    with tqdm(total=image_features.shape[0] * image_features.shape[1]) as pbar:
+        for features, label, city in zip(image_features, labels, cities):
+            for feature in features:
+                feature_vectors.append(feature.flatten())
+                feature_labels.append(label)
+                feature_cities.append(city)
+                pbar.update(1)
+
+    feature_vectors = np.stack(feature_vectors)
+    feature_labels = np.stack(feature_labels)
+    feature_cities = np.array(feature_cities)
+
+    return feature_vectors, feature_labels, feature_cities
+
+
+def reshape_grouped_features(image_features, labels, cities):
+    """
+    transpose features
+    """
+    image_features = np.transpose(image_features, axes=[0, 3, 1, 2])
+    image_features = image_features.reshape((image_features.shape[0], image_features.shape[1], -1))
+    return image_features, labels, cities
 
 def train_test_split(data, prop=16/23):
     """
@@ -86,7 +210,7 @@ def load_data_from_paths(paths):
         info = list(path.split('/')[-1].split('_'))[:8]
         city, _, year, month, _, lat, lon, _ = info
         with Image.open(path) as image:
-            images.append(np.array(image.resize((300, 400))))
+            images.append(np.array(image.resize(IMAGE_SHAPE)))
             labels.append(np.array([float(lat), float(lon)]))
             cities.append(city)
     images = np.stack(images)
@@ -138,11 +262,13 @@ def load_data(data_path):
     labels = []
     cities = []
     files = os.listdir(data_path)
+    if ".DS_Store" in files:
+        files.remove(".DS_Store")
     for file in tqdm(files):
         info = list(file.split('.jpg')[0].split('_'))[:3]
         city, lat, lon = info
         with Image.open(data_path + file) as image:
-            images.append(np.array(image.resize((300, 400))))
+            images.append(np.array(image))
             labels.append(np.array([float(lat), float(lon)]))
             cities.append(city)
     images = np.stack(images)
@@ -158,11 +284,14 @@ def save_data(images, labels, cities, data_path):
 
     print("saving data to", data_path, "...")
     
-    for image, label, city in tqdm(zip(images, labels, cities)):
-        lat, lon = label
-        image = Image.fromarray(image)
-        filepath = data_path + city + "_" + str(lat) + "_" + str(lon) + ".jpg"
-        image.save(fp=filepath)
+    with tqdm(total=len(images) + 1) as pbar:
+        for image, label, city in zip(images, labels, cities):
+            lat, lon = label
+            image = Image.fromarray(image)
+            filepath = data_path + city + "_" + str(lat) + "_" + str(lon) + ".jpg"
+            image.save(fp=filepath)
+            pbar.update(1)
+
     images = np.stack(images)
     labels = np.stack(labels)
     cities = np.array(cities)
