@@ -133,9 +133,9 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
         images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
         cities = preprocessing.ohe_cities(cities)
         print("\nloading features from", features_path, "...")
-        # features = preprocessing.pass_through_VGG(images)
+        features = preprocessing.pass_through_VGG(images)
         # np.save(features_path + "features", features)
-        features = np.load(features_path + "features.npy")
+        # features = np.load(features_path + "features.npy")
     else:
         images, labels, cities = preprocessing.load_random_data(num_per_city=400)
         preprocessing.plot_points([labels], "world_image.jpeg", density_map=True, normalize_points=True)
@@ -173,18 +173,20 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     train_grouped_labels, test_grouped_labels = preprocessing.train_test_split(grouped_feature_labels)
     train_grouped_cities, test_grouped_cities = preprocessing.train_test_split(grouped_feature_cities)
 
-    city_model = models.VGGCityModel(input_shape=images.shape[1:], output_units=cities.shape[1])
+    city_model = models.VGGCityModel(input_shape=images.shape[1:], output_units=cities.shape[1], dropout=0.5)
     city_model.compile(optimizer=city_model.optimizer, loss=city_model.loss, metrics=["accuracy"])
     city_model.build(train_images.shape)
     city_model.summary()
-    city_model.fit(train_images, train_cities, batch_size=32, epochs=10, validation_data=(test_images, test_cities))
+    city_model.fit(train_images, train_cities, batch_size=32, epochs=20, validation_data=(test_images, test_cities))
 
-    city_features_model = models.VGGCityFeaturesModel(input_shape=images.shape[1:], output_units=cities.shape[1])
-    city_features_model.compile(optimizer=city_features_model.optimizer, loss=city_features_model.loss, metrics=["accuracy"])
-    city_features_model.build(train_images.shape)
+    # city_model.save_weights("city_model_weights.h5")
+
+    # city_features_model = models.VGGCityFeaturesModel(input_shape=images.shape[1:], output_units=cities.shape[1])
+    # city_features_model.compile(optimizer=city_features_model.optimizer, loss=city_features_model.loss, metrics=["accuracy"])
+    # city_features_model.build(train_images.shape)
     # city_features_model.fit(train_images, train_grouped_cities, batch_size=32, epochs=10, validation_data=(test_images, test_grouped_cities))
 
-    print(city_model(train_images[:100]).numpy())
+    print(city_model(train_images[:20]).numpy())
 
 
     """

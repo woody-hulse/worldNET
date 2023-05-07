@@ -241,21 +241,30 @@ class VGGCityModel(tf.keras.Model):
             pooling=None,
         )
 
+        # Freeze majority of VGG layers
+        for i in range(18):
+          self.vgg.layers[i].trainable = False
+
+        print(self.vgg.summary())
+
         self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
         self.head = [
             (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
-            tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")) for i in range(layers)
+            tf.keras.layers.LayerNormalization(),
+            tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")
+            ) for i in range(layers)
         ]
         self.output_layer = tf.keras.layers.Dense(output_units, name = f"{name}_output_dense", activation="softmax")
 
         self.loss = tf.keras.losses.CategoricalCrossentropy()
-        self.optimizer = tf.keras.optimizers.Adam(0.01)
+        self.optimizer = tf.keras.optimizers.Adam(0.001)
 
     def call(self, x):
         x = self.vgg(x)
         x = self.flatten_layer(x)
-        for dense_layer, dropout_layer in self.head:
+        for dense_layer, norm_layer, dropout_layer in self.head:
             x = dense_layer(x)
+            x = norm_layer(x)
             x = dropout_layer(x)
         x = self.output_layer(x)
 
