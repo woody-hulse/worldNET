@@ -740,12 +740,11 @@ class FeatureNearestNeighbors():
         #vgg_features = self.vgg(images)
 
         print("\n" + self.name, "training on", num_images, "images ...")
-
+        print(np.shape(images))
         with tqdm(total=num_images) as pbar:
-            for features, labels in zip(images, labels):
-                for feature_group, label_group in zip(features, labels):
-                    self.vectors.append(feature_group.flatten())
-                    self.labels.append(label_group)
+            for i in range(np.shape(images)[0]):
+                self.vectors.append(images[i,:,:].flatten())
+                self.labels.append(labels[i,:,:].flatten()[:2])
                 pbar.update(1)
 
 
@@ -839,13 +838,15 @@ class FeatureNearestNeighbors():
         
         k = 100
         # finding the distances btwn each of the feature vectors
+        print("finding distances...")
         dists = scipy.spatial.distance.cdist(test_image_feats, train_image_feats, 'euclidean')
         # finding k nearest neighbors of vectors
+        print("sorting and finding k neighbors...")
         k_inds = np.argsort(dists, axis=1)[:, :k]
-
+        print(np.shape(k_inds))
         # extracting the k nearest neighbors x and y labels 
-        k_labels_x = np.take(train_labels[:, 0], k_inds)
-        k_labels_y = np.take(train_labels[:, 1], k_inds)
+        k_labels_x = np.take(train_labels[:,0:1], k_inds)
+        k_labels_y = np.take(train_labels[:,1:2], k_inds)
         # k_labels shape: (x, k, 2) -> x training image features, k NN, 2 coordinates
         k_labels = np.stack((k_labels_x, k_labels_y), axis=2)
 
@@ -862,7 +863,10 @@ class FeatureNearestNeighbors():
     
     def call(self, images):
         # pass
+        test_feats = []
+        for i in range(np.shape(images)[0]):
+          test_feats.append(images[i,:,:].flatten())
         print(np.shape(self.vectors))
-        print(np.shape(images))
+        print(np.shape(test_feats))
         print(np.shape(self.labels))
-        return self.nearest_neighbor_classify(train_image_feats=self.vectors, train_labels=self.labels, test_image_feats=images)
+        return self.nearest_neighbor_classify(train_image_feats=np.array(self.vectors), train_labels=np.array(self.labels), test_image_feats=np.array(test_feats))

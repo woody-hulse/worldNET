@@ -130,6 +130,8 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     if load:
         images, labels, cities = preprocessing.load_data(data_path)
         print("\nloading features from", features_path, "...")
+        #features = preprocessing.pass_through_VGG(images)
+        # np.save(features_path + "features", features)
         features = np.load(features_path + "features.npy")
     else:
         images, labels, cities = preprocessing.load_random_data()
@@ -235,6 +237,7 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     '''
     nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
     nearest_neighbors_model.train(train_grouped_features, train_grouped_labels)
+    # nearest_neighbors_model.train(train_grouped_features, train_grouped_labels)
     # , validation_data=(test_images, test_labels)
     # train_model(nearest_neighbors_model, train_images, train_labels, batch_size=16, epochs=4, test_data=(test_images, test_labels))
 
@@ -244,10 +247,11 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     randomized_guess_model = models.RandomizedGuessModel()
     '''
     # simple_nn_model, mean_model, guess_model, randomized_guess_model, feature_model, naive_vgg_model, worldNET
-    print_results([nearest_neighbors_model], 
-                  [test_features], 
-                  test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
-    # print(models.MeanHaversineDistanceLoss()(test_labels, nearest_neighbors_model))
+    #print_results([nearest_neighbors_model], 
+    #              [test_grouped_features], 
+    #              test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
+    m_x, m_y, _ = nearest_neighbors_model.call(test_grouped_features)
+    print(models.MeanHaversineDistanceLoss()(test_labels, np.stack((m_x, m_y), axis=1)))
 
 if __name__ == "__main__":
     os.system("clear")
