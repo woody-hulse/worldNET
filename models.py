@@ -9,8 +9,8 @@ import random
 from tqdm import tqdm
 from sklearn.cluster import KMeans, MeanShift
 
-import matplotlib
-matplotlib.use("tkagg")
+# import matplotlib
+# matplotlib.use("tkagg")
 from matplotlib import pyplot as plt
 
 import preprocessing_gsv as preprocessing
@@ -102,11 +102,10 @@ class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
         c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
-        distance = earth_radius * c
 
-        mean_distance = tf.reduce_mean(distance)
+        distance = tf.reduce_mean(c * earth_radius)
 
-        return mean_distance
+        return distance
     
 
 class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
@@ -118,6 +117,7 @@ class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
 
     def call(self, y_true, y_pred):
 
+        y_pred_norm = y_pred
         y_true = preprocessing.unnormalize_labels(y_true)
         y_pred = preprocessing.unnormalize_labels(y_pred)
 
@@ -133,13 +133,18 @@ class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
         dlat = lat2_rad - lat1_rad
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
-        c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
 
-        lmbda = 0.1
-        mean_distance = tf.reduce_mean(c)
-        mean_std_pred = tf.math.reduce_mean(tf.math.reduce_std(y_pred, axis=0))
+        lmbda1 = 3
+        lmbda2 = 0.002
+        epsilon = 1e-5
+        c = tf.pow(2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a)), 4)
+        c = tf.reduce_mean(c)
+        # center_penalty = tf.reduce_mean(tf.square(y_pred_norm - tf.constant(np.full(y_pred_norm.shape, 0.5), dtype=tf.float32)))
+        var_penalty = 1 / (tf.reduce_mean(tf.math.reduce_variance(y_pred_norm, axis=0)) + epsilon)
 
-        return mean_distance + 1 / mean_std_pred * lmbda
+        loss = c # + var_penalty * lmbda2 # + center_penalty * lmbda1
+
+        return loss
     
 
 class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
@@ -167,10 +172,6 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
         c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
-        # distance = earth_radius * c
-
-        # distance /= sigma
-        # distance += sigma
 
         mean_c = tf.reduce_mean(c)
         std_c = tf.math.reduce_std(c)
@@ -183,9 +184,134 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
         return mean_c + 1 / (std_c + epsilon) + (1 / mean_sigma + mean_sigma) / 100
 
 
+class VGGCityFeaturesModel(tf.keras.Model):
+  def __init__(self, 
+            units		= 512,
+            input_shape = (300, 400, 3),
+            layers		= 1,
+            dropout		= 0.4,
+            output_units= 2,
+            name		= "vgg_feature_city"
+        ):		
+        
+        super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+
+        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=64, num_layers=4, output_units=output_units, output_activation="softmax")
+
+        self.loss = tf.keras.losses.CategoricalCrossentropy()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+  def call(self, x):
+      x = self.vgg(x)
+      x = tf.transpose(x, perm=[0, 3, 1, 2])
+      x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+      x = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
+      return x
+
+
+
+class worldNETCity(tf.keras.Model):
+    def __init__(self, 
+            city_model,
+            city_labels,
+            units       = 512,
+            layers		  = 2,
+            dropout		  = 0.2,
+            output_units= 2,
+            name		    = "worldnet_city"
+        ):
+
+      super().__init__(name=name)
+
+      self.city_model	= city_model
+      self.city_labels = tf.constant([city_labels], dtype=tf.float32)
+      self.city_model.trainable = False
+
+      self.head = [
+          (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
+          tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")
+          ) for i in range(layers)
+      ]
+
+      self.output_layer = tf.keras.layers.Dense(output_units, name=f"{name}_output_dense", activation="softmax")
+
+      self.loss = MeanHaversineDistanceLoss()
+      self.optimizer = tf.keras.optimizers.Adam(0.001)
+
+
+    def call(self, x):
+      x = self.city_model(x)
+      for dense_layer, dropout_layer in self.head:
+          x = dense_layer(x)
+          x = dropout_layer(x)
+      x = self.output_layer(x)
+
+      return x @ self.city_labels
+
+
+
+
+class VGGCityModel(tf.keras.Model):
+    def __init__(self, 
+            units		= 512,
+            input_shape = (300, 400, 3),
+            layers		= 2,
+            dropout		= 0.2,
+            output_units= 2,
+            name		= "vgg_city"
+        ):		
+        
+        super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+
+        # Freeze majority of VGG layers
+        for i in range(18):
+          self.vgg.layers[i].trainable = False
+
+        self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
+        self.head = [
+            (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
+            tf.keras.layers.LayerNormalization(),
+            tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")
+            ) for i in range(layers)
+        ]
+        self.output_layer = tf.keras.layers.Dense(output_units, name = f"{name}_output_dense", activation="softmax")
+
+        self.loss = tf.keras.losses.CategoricalCrossentropy()
+        self.optimizer = tf.keras.optimizers.Adam(0.001)
+
+    def call(self, x):
+        x = self.vgg(x)
+        x = self.flatten_layer(x)
+        for dense_layer, norm_layer, dropout_layer in self.head:
+            x = dense_layer(x)
+            x = norm_layer(x)
+            x = dropout_layer(x)
+        x = self.output_layer(x)
+
+        return x
+
+
+
 class NaiveVGG(tf.keras.Model):
     def __init__(self, 
             units		= 512, 				# number of units in each dense layer
+            input_shape = (300, 400, 3),
             layers		= 2, 				# number of dense layers
             dropout		= 0.2, 				# dropout proportion per dense layer
             output_units= 2, 				# number of units in output dense layer
@@ -193,6 +319,14 @@ class NaiveVGG(tf.keras.Model):
         ):		
         
         super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
 
         self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
         self.head = [
@@ -204,8 +338,9 @@ class NaiveVGG(tf.keras.Model):
         self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
-    def call(self, features):
-        x = self.flatten_layer(features)
+    def call(self, x):
+        x = self.vgg(x)
+        x = self.flatten_layer(x)
         for dense_layer, dropout_layer in self.head:
             x = dense_layer(x)
             x = dropout_layer(x)
@@ -294,26 +429,25 @@ class FeatureDistributionNN(tf.keras.Model):
     predicts the mean and standard deviation of location of features
     """
 
-    def __init__(self, hidden_size=8, num_layers=4, name="feature_distribution_nn"):
+    def __init__(self, hidden_size=8, num_layers=4, output_units=2, output_activation="sigmoid", name="feature_distribution_nn"):
 
         super().__init__(name=name)
 
-        self.dense_layers = [
-            tf.keras.layers.Dense(hidden_size, activation="relu") for _ in range(num_layers)
-        ]
-        self.mu_layer = tf.keras.layers.Dense(2, activation="sigmoid")
-        self.sigma_layer = tf.keras.layers.Dense(1, activation="sigmoid")
+        self.dense_layers = []
 
-        self.loss = MeanNormalHaversineDistanceLoss()
-        self.optimizer = tf.keras.optimizers.Adam(0.004)
+        for layer in range(num_layers):
+            self.dense_layers.append(tf.keras.layers.Dense(hidden_size, activation="leaky_relu", kernel_initializer=tf.keras.initializers.GlorotUniform()))
+            self.dense_layers.append(tf.keras.layers.Dropout(0.7))
+        self.mu_layer = tf.keras.layers.Dense(output_units, activation=output_activation, kernel_initializer=tf.keras.initializers.GlorotUniform())
+
+        self.loss = SpreadMeanHaversineDistanceLoss()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
     
     def call(self, x):
         for layer in self.dense_layers:
             x = layer(x)
-            x = tf.keras.layers.Dropout(0.1)(x)
         mu = self.mu_layer(x)
-        sigma = self.sigma_layer(x)
-        return mu, sigma
+        return mu
     
 
 
@@ -339,11 +473,14 @@ class FeatureDistributionModel():
 
 
     def call(self, x):
-        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
-        mean_preds, sigma_preds = mean_preds.numpy(), sigma_preds.numpy()
+        mean_preds = self.feature_distribution_nn.call(x)
+        mean_preds = mean_preds.numpy()
+
+        plt.scatter(mean_preds[0, :, 1], mean_preds[0, :, 0])
+        plt.show()
 
         centers = []
-        for mean, sigma in zip(mean_preds, sigma_preds):
+        for mean in mean_preds:
             kmeans = KMeans(n_clusters=self.num_clusters, n_init='auto')
             kmeans.fit(mean)
 
@@ -440,9 +577,11 @@ class VGGFeatureDistributionModel(tf.keras.Model):
             pooling=None,
         )
 
+        # self.vgg.trainable = False
+
         self.feature_distribution_nn = FeatureDistributionNN(hidden_size=hidden_size, num_layers=num_layers)
 
-        self.loss = MeanHaversineDistanceLoss()
+        self.loss = SpreadMeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
 
@@ -450,7 +589,7 @@ class VGGFeatureDistributionModel(tf.keras.Model):
         x = self.vgg(x)
         x = tf.transpose(x, perm=[0, 3, 1, 2])
         x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-        mu, sigma = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
+        mu = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
         return mu
         
 
@@ -502,7 +641,7 @@ class worldNET():
 
         self.feature_distribution_model = VGGFeatureDistributionModel(input_shape, hidden_size, num_layers)
 
-        self.loss = MeanHaversineDistanceLoss()
+        self.loss = SpreadMeanHaversineDistanceLoss()
     
     def call(self, x):
 
@@ -562,7 +701,7 @@ def inception_module(x,
     return output
 
     
-def createInceptionModel(input_shape):
+def createInceptionModel(input_shape, output_units=32):
 
     """
     adapted from google
@@ -614,7 +753,7 @@ def createInceptionModel(input_shape):
     x1 = tf.keras.layers.Flatten()(x1)
     x1 = tf.keras.layers.Dense(1024, activation='relu')(x1)
     x1 = tf.keras.layers.Dropout(0.7)(x1)
-    x1 = tf.keras.layers.Dense(2, activation='sigmoid', name='auxilliary_output_1')(x1)
+    x1 = tf.keras.layers.Dense(output_units, activation='sigmoid', name='auxilliary_output_1')(x1)
 
     x = inception_module(x,
                         filters_1x1=160,
@@ -649,7 +788,7 @@ def createInceptionModel(input_shape):
     x2 = tf.keras.layers.Flatten()(x2)
     x2 = tf.keras.layers.Dense(1024, activation='relu')(x2)
     x2 = tf.keras.layers.Dropout(0.7)(x2)
-    x2 = tf.keras.layers.Dense(2, activation='sigmoid', name='auxilliary_output_2')(x2)
+    x2 = tf.keras.layers.Dense(output_units, activation='sigmoid', name='auxilliary_output_2')(x2)
 
     x = inception_module(x,
                         filters_1x1=256,
@@ -684,7 +823,7 @@ def createInceptionModel(input_shape):
 
     x = tf.keras.layers.Dropout(0.4)(x)
 
-    x = tf.keras.layers.Dense(2, activation='sigmoid', name='output')(x)
+    x = tf.keras.layers.Dense(output_units, activation="sigmoid", name='output_dense')
 
     return tf.keras.Model(input_layer, [x, x1, x2], name='inception')
 
@@ -732,8 +871,6 @@ class FeatureNearestNeighbors():
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
     def train(self, images, labels):
-
-        # TODO
         
         num_images = len(images)
         
@@ -802,30 +939,13 @@ class FeatureNearestNeighbors():
         # labels shape: (x, 2)
         # dists shape: (x, k)
         # x = number of test images
-        # plt.scatter(labels)
-        # plt.ylim(0, 1)
-        # plt.xlim(0, 1)
-        # plt.show()
-        # weighted_m = np.sum(labels * dists, axis=1) / np.sum(dists, axis=1)
-        
-        weighted_m_x = np.zeros((np.shape(labels)[0], 1))
-        weighted_m_y = np.zeros((np.shape(labels)[0], 1))
-        centers = []
-        # loop through each training image
-        for i in range(np.shape(labels)[0]):
-            # create the mean shift model
-            ms = MeanShift()
-            # fit the model to the given training image's k nearest neighbors' coordinates
-            ms.fit(labels[i,:,:])
-            # [CHANGE THIS LATER] take the biggest cluster and return it's coordinates
-            # weighted_m_x[i] = ms.cluster_centers_[0, 0][0]
-            # weighted_m_y[i] = ms.cluster_centers_[0, 0][1]
-
-            cluster_totals = np.sum(np.eye(np.shape(ms.cluster_centers_)[0])[ms.labels_], axis=1)
-
-            centers.append(ms.cluster_centers_[np.argmax(cluster_totals)])
-        
-        return np.array(centers)
+        plt.scatter(labels[:, 0], labels[:, 1])
+        plt.ylim(0, 1)
+        plt.xlim(0, 1)
+        plt.show()
+        weighted_x = np.sum(labels[:, 0] * dists, axis=1) / np.sum(dists, axis=1)
+        weighted_y = np.sum(labels[:, 1] * dists, axis=1) / np.sum(dists, axis=1)
+        return weighted_x, weighted_y
     
     def calc_sd(self, dists, k):
         # means shape: (x, 1)

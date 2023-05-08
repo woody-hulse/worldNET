@@ -5,10 +5,11 @@ import pandas as pd
 import tensorflow as tf
 from PIL import Image
 from tqdm import tqdm
+import scipy
 import glob
 
-import matplotlib
-matplotlib.use("tkagg")
+# import matplotlib
+# matplotlib.use("tkagg")
 from matplotlib import pyplot as plt
 
 """
@@ -35,12 +36,168 @@ DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
 
 
+
+def ohe_cities_labels(cities, labels):
+    """
+    converts cities to one-hot encoding and finds their mean location
+    """
+
+    unique_cities = []
+    city_labels = []
+    cities_ind = []
+    for city, label in zip(cities, np.copy(labels)):
+        if city in unique_cities:
+            ind = unique_cities.index(city)
+            cities_ind.append(ind)
+            city_labels[ind] += label
+        else:
+            cities_ind.append(len(unique_cities))
+            unique_cities.append(city)
+            city_labels.append(label)
+    cities_ind = np.array(cities_ind)
+    city_labels = np.array(city_labels)
+
+    ohe_cities = np.eye(len(unique_cities))[cities_ind]
+    city_counts = np.sum(ohe_cities, axis=0)
+    city_labels /= np.expand_dims(city_counts, axis=-1)
+
+    city_labels = normalize_labels(city_labels)
+
+    return ohe_cities, city_labels
+
+
+def plot_points(points_list, image_path, colors=['r'], density_map=False, normalize_points=False):
+    """
+    plots points over an image
+    """
+
+    print("plotting points ...")
+
+    if normalize_points:
+        normalized_points_list = []
+        for points in points_list:
+            normalized_points_list.append(normalize_labels(points))
+        points_list = normalized_points_list
+
+    with Image.open(image_path) as image:
+        plt.imshow(image, origin="upper")
+        image = np.array(image)
+        width, height, _ = image.shape
+        if len(points_list) > -1:
+            for a, b in zip(points_list[0], points_list[1]):
+              x, y = np.array([a[1], b[1]]) * width, height - np.array([a[0], b[0]]) * height
+              plt.plot(x, y, c='#000000', linewidth='1', linestyle="--")
+        for points, color in zip(points_list, colors):
+            x, y = points[:, 1] * width, height - points[:, 0] * height
+            if density_map and len(points_list) == 1:
+                plot_density_map(np.array([x, y]).T, image, r=50, grad=10)
+            else:
+                plt.scatter(x, y, c=color)
+
+        plt.grid(False)
+        plt.axis('off')
+        plt.xlim(0, image.shape[1])
+        plt.ylim(image.shape[0], 0)
+        plt.show()
+
+
+def plot_density_map(points, image, r, grad=5):
+    x_min, y_min = 0, 0
+    x_max, y_max = image.shape[0], image.shape[1]
+    n_bins = 500
+    x_bins = np.linspace(x_min, x_max, n_bins)
+    y_bins = np.linspace(y_min, y_max, n_bins)
+    xx, yy = np.meshgrid(x_bins, y_bins)
+
+    density = np.zeros((n_bins, n_bins))
+    kdtree = scipy.spatial.cKDTree(points)
+    for i in tqdm(range(n_bins)):
+        for j in range(n_bins):
+            for g in range(1, grad):
+                indices = kdtree.query_ball_point([xx[i, j], yy[i, j]], r * (g / grad))
+                density[i, j] += len(indices)
+
+    density = density / np.max(density)
+    heatmap = np.empty((n_bins, n_bins, 4))
+    heatmap[:] = np.array([1, 0, 0, 0])
+    heatmap[:, :, 3] = density
+
+    plt.imshow(heatmap, extent=[x_min, x_max, y_min, y_max], cmap="hot", origin="lower", alpha=0.8)
+    plt.colorbar()
+
+
+def uniform_geographic_distribution(images, labels, cities, radius=10, maximum=100):
+    """
+    remove image/label/cities from dense areas
+    """
+
+    print("\nfiltering", len(images), "images for uniform distribution ...")
+
+    print_city_distribution(cities, cities)
+
+    num_images = len(images)
+    kdtree = scipy.spatial.cKDTree(labels)
+    remove_indices = set()
+    remove_labels = [[0, 0]]
+    remove_kdtree = scipy.spatial.cKDTree(remove_labels)
+    with tqdm(total=len(images)) as pbar:
+        for i, label in enumerate(labels):
+            indices = kdtree.query_ball_point(label, radius)
+            indices_ = remove_kdtree.query_ball_point(label, radius)
+            if len(indices) - len(indices_) > maximum:
+                remove_indices.add(i)
+                remove_labels.append(label)
+                remove_kdtree = scipy.spatial.cKDTree(remove_labels)
+            pbar.update(1)
+
+    new_images, new_labels, new_cities = [], [], []
+    for i in tqdm(range(num_images)):
+        if i not in remove_indices:
+            new_images.append(images[i])
+            new_labels.append(labels[i])
+            new_cities.append(cities[i])
+    new_images = np.stack(new_images)
+    new_labels = np.stack(new_labels)
+    new_cities = np.stack(new_cities)
+
+    print(num_images, "->", len(new_images))
+    print_city_distribution(cities, new_cities)
+
+    return new_images, new_labels, new_cities
+
+
+def print_city_distribution(index_cities, cities):
+    """
+    prints table of images in each city
+    """
+    index_cities = list(set(index_cities))
+    cities = list(cities)
+    counts = [cities.count(index_city) for index_city in index_cities]
+
+    df = pd.DataFrame(counts, index=index_cities, columns=["count"])
+    print()
+    print(df)
+    print()
+
+
 def group_feature_labels(labels, num_features=512):
     """
     groups every 512 feature labels
     """
 
     return labels.reshape(-1, num_features, labels.shape[1])
+
+
+def expand_and_group_feature_labels(labels, num_features=512):
+    """
+    expands and groups feature labels
+    """
+
+    grouped_labels = []
+    for label in labels:
+        grouped_labels.append([label] * num_features)
+
+    return np.array(grouped_labels)
 
 
 def shuffle_data(images, labels, cities):
@@ -116,8 +273,6 @@ def pass_through_VGG(images):
     print("\npassing image data through vgg ...")
 
     features = vgg.predict(images)
-
-    print(features.shape)
 
     return features
 
