@@ -716,6 +716,7 @@ class FeatureNearestNeighbors():
         # self.vgg = tf.keras.models.load_model("weights/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5")
         # self.vgg.summary()
         
+        '''
         self.vgg = tf.keras.applications.VGG19(
             include_top=False,
             weights="imagenet",
@@ -725,6 +726,7 @@ class FeatureNearestNeighbors():
         )
         
         self.vgg.trainable = False
+        '''
 
         self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
@@ -735,15 +737,15 @@ class FeatureNearestNeighbors():
         
         num_images = len(images)
         
-        vgg_features = self.vgg(images)
+        #vgg_features = self.vgg(images)
 
         print("\n" + self.name, "training on", num_images, "images ...")
 
         with tqdm(total=num_images) as pbar:
-            for features, label in zip(vgg_features, labels):
-                for feature in features:
-                    self.vectors.append(feature.flatten())
-                    self.labels.append(label)
+            for features, labels in zip(images, labels):
+                for feature_group, label_group in zip(features, labels):
+                    self.vectors.append(feature_group.flatten())
+                    self.labels.append(label_group)
                 pbar.update(1)
 
 
@@ -785,8 +787,8 @@ class FeatureNearestNeighbors():
             img_hists = np.append(img_hists, img_hist, axis=0)
         
         return img_hists
-    
-        '''
+
+    '''
         general idea:
 
                 store all or some of the training feature vectors and their corresponding latitude/longitude label
@@ -801,14 +803,15 @@ class FeatureNearestNeighbors():
         # labels shape: (x, 2)
         # dists shape: (x, k)
         # x = number of test images
-        plt.scatter(labels)
-        plt.ylim(0, 1)
-        plt.xlim(0, 1)
-        plt.show()
+        # plt.scatter(labels)
+        # plt.ylim(0, 1)
+        # plt.xlim(0, 1)
+        # plt.show()
         # weighted_m = np.sum(labels * dists, axis=1) / np.sum(dists, axis=1)
         
         weighted_m_x = np.zeros((np.shape(labels)[0], 1))
         weighted_m_y = np.zeros((np.shape(labels)[0], 1))
+        centers = []
         # loop through each training image
         for i in range(np.shape(labels)[0]):
             # create the mean shift model
@@ -816,10 +819,14 @@ class FeatureNearestNeighbors():
             # fit the model to the given training image's k nearest neighbors' coordinates
             ms.fit(labels[i,:,:])
             # [CHANGE THIS LATER] take the biggest cluster and return it's coordinates
-            weighted_m_x[i] = ms.cluster_centers_[0, 0][0]
-            weighted_m_y[i] = ms.cluster_centers_[0, 0][1]
+            # weighted_m_x[i] = ms.cluster_centers_[0, 0][0]
+            # weighted_m_y[i] = ms.cluster_centers_[0, 0][1]
 
-        return weighted_m_x, weighted_m_y
+            cluster_totals = np.sum(np.eye(np.shape(ms.cluster_centers_)[0])[ms.labels_], axis=1)
+
+            centers.append(ms.cluster_centers_[np.argmax(cluster_totals)])
+        
+        return np.array(centers)
     
     def calc_sd(self, dists, k):
         # means shape: (x, 1)
@@ -846,11 +853,16 @@ class FeatureNearestNeighbors():
         k_dists = np.take(dists, k_inds)
 
         # calculate the weighted means and standard deviations
-        weighted_m_x, weighted_m_y = self.calc_mean(k_labels, k_dists)
+        weighted_m = self.calc_mean(k_labels, k_dists)
+        weighted_m_x = weighted_m[:, 0]
+        weighted_m_y = weighted_m[:, 1]
         weighted_sd = self.calc_sd(k_dists, k)
 
         return weighted_m_x, weighted_m_y, weighted_sd
     
-    def call(self, features):
-        pass
-        # return self.nearest_neighbor_classify(_, _, _)
+    def call(self, images):
+        # pass
+        print(np.shape(self.vectors))
+        print(np.shape(images))
+        print(np.shape(self.labels))
+        return self.nearest_neighbor_classify(train_image_feats=self.vectors, train_labels=self.labels, test_image_feats=images)

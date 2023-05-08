@@ -183,7 +183,8 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     lat, long, std = nearest_neighbors_model.nearest_neighbor_classify(train_features[:10000], train_feature_labels[:10000], test_features[:100])
     print(models.MeanHaversineDistanceLoss()(test_feature_labels[:100], np.stack([lat, long]).T))
 
-    test_model = models.createInceptionModel(input_shape=images.shape[1:])
+    
+    '''test_model = models.createInceptionModel(input_shape=images.shape[1:])
     test_model_weights_path = weights_path + "test.h5"
     test_model.compile(optimizer=tf.keras.optimizers.Adam(0.01), loss=models.MeanHaversineDistanceLoss(), metrics=[])
     test_model.build(train_images.shape)
@@ -211,7 +212,7 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
 
     feature_model = models.FeatureDistributionModel(hidden_size=64, num_layers=4)
     train_distribution_model(feature_model.feature_distribution_nn, train_features, train_feature_labels, test_features, test_feature_labels, epochs=4, batch_size=128, downsampling=32, verbose=2, summary=True)
-
+    '''
 
     """
     pred_mu, pred_sigma = feature_model.feature_distribution_nn(train_features[:64])
@@ -225,25 +226,29 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     plt.scatter(true[:, 1], true[:, 0], c='r')
     plt.show()
     """
-
+    '''
     naive_vgg_model = models.NaiveVGG(units=8, output_units=2, layers=1)
     train_model(naive_vgg_model, train_grouped_features, train_labels, test_grouped_features, test_labels, epochs=1, batch_size=16)
 
     simple_nn_model = models.SimpleNN(output_units=2, name="simple_nn")
     train_model(simple_nn_model, train_images, train_labels, test_images, test_labels, epochs=4, batch_size=16)
+    '''
+    nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
+    nearest_neighbors_model.train(train_grouped_features, train_grouped_labels)
+    # , validation_data=(test_images, test_labels)
+    # train_model(nearest_neighbors_model, train_images, train_labels, batch_size=16, epochs=4, test_data=(test_images, test_labels))
 
-    # nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
-    # train_model(nearest_neighbors_model, train_images, train_labels, batch_size=16, epochs=4, validation_data=(test_images, test_labels))
-
+    '''
     mean_model = models.MeanModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
     guess_model = models.GuessModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
     randomized_guess_model = models.RandomizedGuessModel()
-
-    print_results([simple_nn_model, mean_model, guess_model, randomized_guess_model, feature_model, naive_vgg_model, worldNET], 
-                  [test_images, test_images, test_images, test_images, test_grouped_features, test_grouped_features, test_images[:64]], 
+    '''
+    # simple_nn_model, mean_model, guess_model, randomized_guess_model, feature_model, naive_vgg_model, worldNET
+    print_results([nearest_neighbors_model], 
+                  [test_features], 
                   test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
-
+    # print(models.MeanHaversineDistanceLoss()(test_labels, nearest_neighbors_model))
 
 if __name__ == "__main__":
     os.system("clear")
-    main(save=True, load=False, train=False, load_model=True, save_model=True)
+    main(save=False, load=True, train=False, load_model=True, save_model=True)
