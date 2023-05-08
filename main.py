@@ -3,6 +3,12 @@ import tensorflow as tf
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
+import geopandas as gpd
+from shapely.geometry import Point
+from scipy.spatial.distance import cdist
+
+LAND_POLYGONS = gpd.read_file("./GSHHS_f_L3.shp")
+LAND_MASK = LAND_POLYGONS.geometry.unary_union
 
 # import matplotlib
 # matplotlib.use("tkagg")
@@ -10,6 +16,26 @@ from matplotlib import pyplot as plt
 
 import preprocessing_gsv as preprocessing
 import models
+
+
+def map_to_land(y_true, y_pred):
+    """
+    maps all predictions to nearest land coordinate
+    """
+
+    y_true_land, y_pred_land = [], []
+
+    for i in range(y_pred.shape[0]):
+        point = Point(y_pred[i, 1], y_pred[i, 0])
+        if not point.within(LAND_MASK):
+            for polygon in LAND_MASK.geoms:
+                if polygon.intersects(point):
+                    land_points = np.array(list(polygon.exterior.coords))
+                    dists = cdist([point.coords[0]], land_points)
+                    nearest_land_point = land_points[np.argmin(dists)]
+                    y_pred[i] = np.array([nearest_land_point[1], nearest_land_point[0]])
+
+    return y_true, y_pred
 
 
 def print_results(models, test_data, test_labels, metrics):
@@ -22,7 +48,10 @@ def print_results(models, test_data, test_labels, metrics):
     for model, data in zip(models, test_data):
         table.append([])
         for metric in metrics:
-            table[-1].append(metric(test_labels[:data.shape[0]], model.call(data)).numpy())
+            y_true = test_labels[:data.shape[0]]
+            y_pred = model.call(data)
+
+            table[-1].append(metric(y_true, y_pred).numpy())
     
     table_df = pd.DataFrame(
         data=table, 
@@ -131,11 +160,11 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     if load:
         images, labels, cities = preprocessing.load_data(data_path)
         images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
-        cities = preprocessing.ohe_cities(cities)
+        cities, city_labels = preprocessing.ohe_cities_labels(cities, np.copy(labels))
         print("\nloading features from", features_path, "...")
-        features = preprocessing.pass_through_VGG(images)
+        # features = preprocessing.pass_through_VGG(images)
         # np.save(features_path + "features", features)
-        # features = np.load(features_path + "features.npy")
+        features = np.load(features_path + "features.npy")
     else:
         images, labels, cities = preprocessing.load_random_data(num_per_city=400)
         preprocessing.plot_points([labels], "world_image.jpeg", density_map=True, normalize_points=True)
@@ -176,18 +205,39 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     city_model = models.VGGCityModel(input_shape=images.shape[1:], output_units=cities.shape[1], dropout=0.5)
     city_model.compile(optimizer=city_model.optimizer, loss=city_model.loss, metrics=["accuracy"])
     city_model.build(train_images.shape)
+    city_model.load_weights("city_model_weights.h5")
     city_model.summary()
-    city_model.fit(train_images, train_cities, batch_size=32, epochs=20, validation_data=(test_images, test_cities))
+    city_model.fit(train_images, train_cities, batch_size=32, epochs=10, validation_data=(test_images, test_cities))
 
-    # city_model.save_weights("city_model_weights.h5")
+    city_model.save_weights("city_model_weights.h5")
+
+    worldNET_city = models.worldNETCity(city_model=city_model, city_labels=city_labels, output_units=cities.shape[1], units=64, layers=2)
+    worldNET_city.compile(optimizer=worldNET_city.optimizer, loss=worldNET_city.loss, metrics=[])
+    worldNET_city.build(train_images.shape)
+    worldNET_city.load_weights("worldNET_weights.h5")
+    worldNET_city.summary()
+    worldNET_city.fit(train_images, train_labels, batch_size=32, epochs=10, validation_data=(test_images, test_labels))
+    worldNET_city.save_weights("worldNET_weights.h5")
 
     # city_features_model = models.VGGCityFeaturesModel(input_shape=images.shape[1:], output_units=cities.shape[1])
     # city_features_model.compile(optimizer=city_features_model.optimizer, loss=city_features_model.loss, metrics=["accuracy"])
     # city_features_model.build(train_images.shape)
     # city_features_model.fit(train_images, train_grouped_cities, batch_size=32, epochs=10, validation_data=(test_images, test_grouped_cities))
 
-    print(city_model(train_images[:20]).numpy())
+    mean_model = models.MeanModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
+    guess_model = models.GuessModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
+    randomized_guess_model = models.RandomizedGuessModel()
 
+    y_pred = worldNET_city(test_images[:13])[0]
+    y_true = test_labels[:13]
+    y_true, y_pred = map_to_land(y_true, y_pred)
+    preprocessing.plot_points([y_pred, y_true], "world_image.jpeg", colors=['b', 'r'])
+    tf.print(models.MeanHaversineDistanceLoss().call(y_true, y_pred))
+    tf.print(models.DistanceAccuracy().call(y_true, y_pred))
+
+    print_results([mean_model, guess_model, randomized_guess_model, worldNET_city], 
+                  [test_images, test_images, test_images, test_images[:64]], 
+                  test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
 
     """
     # feature_labels = preprocessing.normalize_labels(feature_labels)

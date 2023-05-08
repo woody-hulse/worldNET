@@ -36,28 +36,34 @@ DATA_PATH = "../data/archive/"
 IMAGE_SHAPE = (300, 400)
 
 
-def ohe_cities(cities):
-  """
-  converts cities to one-hot encoding
-  """
 
-  print(np.array(cities).shape)
+def ohe_cities_labels(cities, labels):
+    """
+    converts cities to one-hot encoding and finds their mean location
+    """
 
-  unique_cities = []
-  cities_ind = []
-  for city in cities:
-    if city in unique_cities:
-      cities_ind.append(unique_cities.index(city))
-    else:
-      cities_ind.append(len(unique_cities))
-      unique_cities.append(city)
-  cities_ind = np.array(cities_ind)
+    unique_cities = []
+    city_labels = []
+    cities_ind = []
+    for city, label in zip(cities, np.copy(labels)):
+        if city in unique_cities:
+            ind = unique_cities.index(city)
+            cities_ind.append(ind)
+            city_labels[ind] += label
+        else:
+            cities_ind.append(len(unique_cities))
+            unique_cities.append(city)
+            city_labels.append(label)
+    cities_ind = np.array(cities_ind)
+    city_labels = np.array(city_labels)
 
-  ohe_cities = np.eye(len(unique_cities))[cities_ind]
+    ohe_cities = np.eye(len(unique_cities))[cities_ind]
+    city_counts = np.sum(ohe_cities, axis=0)
+    city_labels /= np.expand_dims(city_counts, axis=-1)
 
-  print(ohe_cities.shape)
+    city_labels = normalize_labels(city_labels)
 
-  return ohe_cities
+    return ohe_cities, city_labels
 
 
 def plot_points(points_list, image_path, colors=['r'], density_map=False, normalize_points=False):
@@ -77,12 +83,17 @@ def plot_points(points_list, image_path, colors=['r'], density_map=False, normal
         plt.imshow(image, origin="upper")
         image = np.array(image)
         width, height, _ = image.shape
+        if len(points_list) > -1:
+            for a, b in zip(points_list[0], points_list[1]):
+              x, y = np.array([a[1], b[1]]) * width, height - np.array([a[0], b[0]]) * height
+              plt.plot(x, y, c='#000000', linewidth='1', linestyle="--")
         for points, color in zip(points_list, colors):
             x, y = points[:, 1] * width, height - points[:, 0] * height
             if density_map and len(points_list) == 1:
                 plot_density_map(np.array([x, y]).T, image, r=50, grad=10)
             else:
                 plt.scatter(x, y, c=color)
+
         plt.grid(False)
         plt.axis('off')
         plt.xlim(0, image.shape[1])

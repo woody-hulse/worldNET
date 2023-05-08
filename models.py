@@ -172,10 +172,6 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
         dlon = lon2_rad - lon1_rad
         a = tf.square(tf.sin(dlat / 2)) + tf.cos(lat1_rad) * tf.cos(lat2_rad) * tf.square(tf.sin(dlon / 2))
         c = 2 * tf.atan2(tf.sqrt(a), tf.sqrt(1 - a))
-        # distance = earth_radius * c
-
-        # distance /= sigma
-        # distance += sigma
 
         mean_c = tf.reduce_mean(c)
         std_c = tf.math.reduce_std(c)
@@ -221,6 +217,48 @@ class VGGCityFeaturesModel(tf.keras.Model):
       return x
 
 
+
+class worldNETCity(tf.keras.Model):
+    def __init__(self, 
+            city_model,
+            city_labels,
+            units       = 512,
+            layers		  = 2,
+            dropout		  = 0.2,
+            output_units= 2,
+            name		    = "worldnet_city"
+        ):
+
+      super().__init__(name=name)
+
+      self.city_model	= city_model
+      self.city_labels = tf.constant([city_labels], dtype=tf.float32)
+      self.city_model.trainable = False
+
+      self.head = [
+          (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
+          tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")
+          ) for i in range(layers)
+      ]
+
+      self.output_layer = tf.keras.layers.Dense(output_units, name=f"{name}_output_dense", activation="softmax")
+
+      self.loss = MeanHaversineDistanceLoss()
+      self.optimizer = tf.keras.optimizers.Adam(0.001)
+
+
+    def call(self, x):
+      x = self.city_model(x)
+      for dense_layer, dropout_layer in self.head:
+          x = dense_layer(x)
+          x = dropout_layer(x)
+      x = self.output_layer(x)
+
+      return x @ self.city_labels
+
+
+
+
 class VGGCityModel(tf.keras.Model):
     def __init__(self, 
             units		= 512,
@@ -244,8 +282,6 @@ class VGGCityModel(tf.keras.Model):
         # Freeze majority of VGG layers
         for i in range(18):
           self.vgg.layers[i].trainable = False
-
-        print(self.vgg.summary())
 
         self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
         self.head = [
@@ -665,7 +701,7 @@ def inception_module(x,
     return output
 
     
-def createInceptionModel(input_shape):
+def createInceptionModel(input_shape, output_units=32):
 
     """
     adapted from google
@@ -717,7 +753,7 @@ def createInceptionModel(input_shape):
     x1 = tf.keras.layers.Flatten()(x1)
     x1 = tf.keras.layers.Dense(1024, activation='relu')(x1)
     x1 = tf.keras.layers.Dropout(0.7)(x1)
-    x1 = tf.keras.layers.Dense(2, activation='sigmoid', name='auxilliary_output_1')(x1)
+    x1 = tf.keras.layers.Dense(output_units, activation='sigmoid', name='auxilliary_output_1')(x1)
 
     x = inception_module(x,
                         filters_1x1=160,
@@ -752,7 +788,7 @@ def createInceptionModel(input_shape):
     x2 = tf.keras.layers.Flatten()(x2)
     x2 = tf.keras.layers.Dense(1024, activation='relu')(x2)
     x2 = tf.keras.layers.Dropout(0.7)(x2)
-    x2 = tf.keras.layers.Dense(2, activation='sigmoid', name='auxilliary_output_2')(x2)
+    x2 = tf.keras.layers.Dense(output_units, activation='sigmoid', name='auxilliary_output_2')(x2)
 
     x = inception_module(x,
                         filters_1x1=256,
@@ -787,7 +823,7 @@ def createInceptionModel(input_shape):
 
     x = tf.keras.layers.Dropout(0.4)(x)
 
-    x = tf.keras.layers.Dense(2, activation='sigmoid', name='output')(x)
+    x = tf.keras.layers.Dense(output_units, activation="sigmoid", name='output_dense')
 
     return tf.keras.Model(input_layer, [x, x1, x2], name='inception')
 
@@ -833,8 +869,6 @@ class FeatureNearestNeighbors():
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
     def train(self, images, labels):
-
-        # TODO
         
         num_images = len(images)
         
