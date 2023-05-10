@@ -20,10 +20,10 @@ import models
 
 def map_to_land(y_true, y_pred):
     """
-    maps all predictions to nearest land coordinate
+    maps all predictions to nearest land coordinate using known geometries
+    y_true      : true image coordinates
+    y_pred      : predicted image coordinates
     """
-
-    y_true_land, y_pred_land = [], []
 
     for i in range(y_pred.shape[0]):
         point = Point(y_pred[i, 1], y_pred[i, 0])
@@ -41,6 +41,10 @@ def map_to_land(y_true, y_pred):
 def print_results(models, test_data, test_labels, metrics):
     """
     prints the results of each model after training
+    models      : list of models
+    test_data   : model-specific test data
+    test_labels : model-specific test labels
+    metrics     : table evaluation metrics
     """
 
     table = []
@@ -66,6 +70,15 @@ def print_results(models, test_data, test_labels, metrics):
 def train_model(model, train_data, train_labels, test_data=[], test_labels=[], epochs=10, batch_size=16, summary=False, compile=True):
     """
     train a model
+    model       : model inheriting from tf.keras.Model
+    train_data  :
+    train_labels:
+    test_data   :
+    test_labels :
+    epochs      : number of training epochs
+    batch_size  : batch size for training
+    summary     : print description of model
+    compile     : False for pre-compiled models
     """
 
     print("\ntraining", model.name, "...")
@@ -80,7 +93,18 @@ def train_model(model, train_data, train_labels, test_data=[], test_labels=[], e
 
 def train_distribution_model(model, train_data, train_labels, test_data=[], test_labels=[], epochs=10, batch_size=16, summary=False, downsampling=4, verbose=1, compile=True):
     """
-    train a distribution model with mu, sigma outputs
+    [UNUSED] train a distribution model with mu, sigma outputs
+    model       : model inheriting from tf.keras.Model
+    train_data  :
+    train_labels:
+    test_data   :
+    test_labels :
+    epochs      : number of training epochs
+    batch_size  : batch size for training
+    summary     : print description of model
+    downsampling: factor for reducing training samples
+    verbose     : print characteristic
+    compile     : False for pre-compiled models
     """
 
     print("\ntraining", model.name, "...")
@@ -149,9 +173,15 @@ def train_distribution_model(model, train_data, train_labels, test_data=[], test
             print("training loss :", train_loss)
 
 
-
-
 def main(save=True, load=False, train=True, load_model=False, save_model=True):
+
+    """
+    main function for training
+    save        : save loaded images/features to local directory
+    load        : load images/features to local directory
+    load_model  : load models from weights.h5 file
+    save_model  : save models to weights.h5 file
+    """
 
     data_path = "data/"
     features_path = "features/"
@@ -170,7 +200,6 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
         images, labels, cities = preprocessing.uniform_geographic_distribution(images, labels, cities, radius=40, maximum=400)
         preprocessing.plot_points([labels], "world_image.jpeg", density_map=True, normalize_points=True)
         features = preprocessing.pass_through_VGG(images)
-        # features = np.load(features_path + "features.npy")
     if save:
         print("\nsaving data to", data_path, "...")
         preprocessing.remove_files(data_path + "*")
@@ -179,10 +208,9 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
         print("\nsaving features to", features_path, "...")
         np.save(features_path + "features", features)
 
+    # data preprocessing
     labels = preprocessing.normalize_labels(labels)
 
-    # images, labels, cities = preprocessing.shuffle_data(images, labels, cities)
-    # features, feature_labels, feature_cities = preprocessing.shuffle_data(features, labels, cities)
     grouped_features, grouped_feature_labels, grouped_feature_cities = preprocessing.reshape_grouped_features(features, labels, cities)
     features, feature_labels, feature_cities = preprocessing.reshape_features(features, labels, cities)
 
@@ -200,143 +228,40 @@ def main(save=True, load=False, train=True, load_model=False, save_model=True):
     train_grouped_labels, test_grouped_labels = preprocessing.train_test_split(grouped_feature_labels)
     train_grouped_cities, test_grouped_cities = preprocessing.train_test_split(grouped_feature_cities)
 
+    # initial model classifier
     city_model = models.VGGCityModel(input_shape=images.shape[1:], output_units=cities.shape[1], dropout=0.5)
     city_model.compile(optimizer=city_model.optimizer, loss=city_model.loss, metrics=["accuracy"])
     city_model.build(train_images.shape)
-    city_model.load_weights("city_model_weights.h5")
+    if load_model: city_model.load_weights("city_model_weights.h5")
     city_model.summary()
     city_model.fit(train_images, train_cities, batch_size=32, epochs=10, validation_data=(test_images, test_cities))
+    if save_model: city_model.save_weights("city_model_weights.h5")
 
-    city_model.save_weights("city_model_weights.h5")
-
+    # worldNET interpolation head from model classifier
     worldNET_city = models.worldNETCity(city_model=city_model, city_labels=city_labels, output_units=cities.shape[1], units=64, layers=2)
     worldNET_city.compile(optimizer=worldNET_city.optimizer, loss=worldNET_city.loss, metrics=[])
     worldNET_city.build(train_images.shape)
-    worldNET_city.load_weights("worldNET_weights.h5")
+    if load_model: worldNET_city.load_weights("worldNET_weights.h5")
     worldNET_city.summary()
     worldNET_city.fit(train_images, train_labels, batch_size=32, epochs=10, validation_data=(test_images, test_labels))
-    worldNET_city.save_weights("worldNET_weights.h5")
+    if save_model: worldNET_city.save_weights("worldNET_weights.h5")
 
-    # city_features_model = models.VGGCityFeaturesModel(input_shape=images.shape[1:], output_units=cities.shape[1])
-    # city_features_model.compile(optimizer=city_features_model.optimizer, loss=city_features_model.loss, metrics=["accuracy"])
-    # city_features_model.build(train_images.shape)
-    # city_features_model.fit(train_images, train_grouped_cities, batch_size=32, epochs=10, validation_data=(test_images, test_grouped_cities))
-
-    mean_model = models.MeanModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
-    guess_model = models.GuessModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
-    randomized_guess_model = models.RandomizedGuessModel()
-
-    y_pred = worldNET_city(test_images[:13])[0]
-    y_true = test_labels[:13]
+    # view example worldNET predictions
+    y_pred = worldNET_city(test_images[:16])[0]
+    y_true = test_labels[:16]
     y_true, y_pred = map_to_land(y_true, y_pred)
     preprocessing.plot_points([y_pred, y_true], "world_image.jpeg", colors=['b', 'r'])
-    tf.print(models.MeanHaversineDistanceLoss().call(y_true, y_pred))
-    tf.print(models.DistanceAccuracy().call(y_true, y_pred))
 
-    print_results([mean_model, guess_model, randomized_guess_model, worldNET_city], 
-                  [test_images, test_images, test_images, test_images[:64]], 
-                  test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
-
-    """
-    # feature_labels = preprocessing.normalize_labels(feature_labels)
-
-    # grouped_feature_labels = preprocessing.group_feature_labels(feature_labels)
-    # features, feature_labels, feature_cities = preprocessing.shuffle_data(features, feature_labels, feature_cities)
-
-    # preprocessing.plot_features(features, 6)
-
-    train_images, test_images = preprocessing.train_test_split(images)
-    train_labels, test_labels = preprocessing.train_test_split(labels)
-    train_cities, test_cities = preprocessing.train_test_split(cities)
-
-    train_features, test_features = preprocessing.train_test_split(features)
-    train_feature_labels, test_feature_labels = preprocessing.train_test_split(feature_labels)
-    train_feature_cities, test_feature_cities = preprocessing.train_test_split(feature_cities)
-
-    train_grouped_features, test_grouped_features = preprocessing.train_test_split(grouped_features)
-    grouped_feature_labels = preprocessing.expand_and_group_feature_labels(labels)
-    train_grouped_labels, test_grouped_labels = preprocessing.train_test_split(grouped_feature_labels)
-    # train_grouped_cities, test_grouped_cities = preprocessing.train_test_split(grouped_feature_cities)
-
-    plt.scatter(train_labels[:, 0], train_labels[:, 1])
-    plt.xlim([0, 1])
-    plt.ylim([0, 1])
-
-    for i, txt in enumerate(train_cities):
-        plt.annotate(txt, (train_labels[i, 0], train_labels[i, 1]))
-
-    plt.show()
-
-    # nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
-    # lat, long, std = nearest_neighbors_model.nearest_neighbor_classify(train_features[:10000], train_feature_labels[:10000], test_features[:100])
-    # print(models.MeanHaversineDistanceLoss()(test_feature_labels[:100], np.stack([lat, long]).T))
-
-    nearest_neighbors_model = models.FeatureNearestNeighbors(input_shape=images.shape[1:])
-    lat, long, std = nearest_neighbors_model.nearest_neighbor_classify(train_features[:10000], train_feature_labels[:10000], test_features[:100])
-    print(models.MeanHaversineDistanceLoss()(test_feature_labels[:100], np.stack([lat, long]).T))
-
-    test_model = models.createInceptionModel(input_shape=images.shape[1:])
-    test_model_weights_path = weights_path + "test.h5"
-    test_model.compile(optimizer=tf.keras.optimizers.Adam(0.01), loss=models.MeanHaversineDistanceLoss(), metrics=[])
-    test_model.build(train_images.shape)
-    if load_model:
-        print("\nloading test model from", test_model_weights_path, "...")
-        test_model.load_weights(test_model_weights_path)
-    if train:
-        train_model(test_model, train_images, train_labels, test_images, test_labels, epochs=1, batch_size=64, summary=True, compile=False)
-    if save_model:
-        print("\nsaving test model to", test_model_weights_path, "...")
-        test_model.save_weights(test_model_weights_path)
-
-    worldNET = models.worldNET(hidden_size=64, num_layers=3, input_shape=images.shape[1:])
-    worldNET_weights_path = weights_path + "worldNET.h5"
-    worldNET.feature_distribution_model.compile(optimizer=worldNET.feature_distribution_model.optimizer, loss=worldNET.feature_distribution_model.loss, metrics=[])
-    worldNET.feature_distribution_model.build(train_images.shape)
-    if load_model:
-        print("\nloading worldNET model from", worldNET_weights_path, "...")
-        worldNET.feature_distribution_model.load_weights(worldNET_weights_path)
-    if train:
-        train_model(worldNET.feature_distribution_model, train_images, train_grouped_labels, test_images, test_grouped_labels, epochs=1, batch_size=64, summary=True, compile=False)
-    if save_model:
-        print("\nsaving worldNET model to", worldNET_weights_path, "...")
-        worldNET.feature_distribution_model.save_weights(worldNET_weights_path)
-
-    feature_model = models.FeatureDistributionModel(hidden_size=64, num_layers=4)
-    train_distribution_model(feature_model.feature_distribution_nn, train_features, train_feature_labels, test_features, test_feature_labels, epochs=4, batch_size=128, downsampling=32, verbose=2, summary=True)
-
-
-    pred_mu = feature_model.feature_distribution_nn(train_grouped_features[:64])
-    true = train_grouped_labels[:64]
-
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    for i in range(64):
-        plt.plot([pred_mu[i, 0, 1], true[i, 0, 1]], [pred_mu[i, 0, 0], true[i, 0, 0]], c='#000000', linewidth='0.5')
-    plt.scatter(pred_mu[:, 0, 1], pred_mu[:, 0, 0], c='b')
-    plt.scatter(true[:, 0, 1], true[:, 0, 0], c='r')
-    plt.show()
-
-    plt.xlim(0, 1)
-    plt.ylim(0, 1)
-    for i in range(512):
-        plt.plot([pred_mu[0, i, 1], true[0, i, 1]], [pred_mu[0, i, 0], true[0, i, 0]], c='#000000', linewidth='0.5')
-    plt.scatter(pred_mu[0, :, 1], pred_mu[0, :, 0], c='b')
-    plt.scatter(true[0, :, 1], true[0, :, 0], c='r')
-    plt.show()
-    """
-
-    naive_vgg_model = models.NaiveVGG(units=8, output_units=2, layers=1)
+    # control models
+    naive_vgg_model = models.NaiveVGG(units=512, output_units=2, layers=2)
     train_model(naive_vgg_model, train_grouped_features, train_labels, test_grouped_features, test_labels, epochs=1, batch_size=16)
-
-    simple_nn_model = models.SimpleNN(output_units=2, name="simple_nn")
-    train_model(simple_nn_model, train_images, train_labels, test_images, test_labels, epochs=4, batch_size=16)
-
     mean_model = models.MeanModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
     guess_model = models.GuessModel(train_labels=train_labels, loss_fn=models.MeanHaversineDistanceLoss())
     randomized_guess_model = models.RandomizedGuessModel()
 
-    print_results([simple_nn_model, mean_model, guess_model, randomized_guess_model, feature_model, naive_vgg_model, worldNET], 
-                  [test_images, test_images, test_images, test_images, test_grouped_features, test_grouped_features, test_images[:64]], 
+    # create table for final results
+    print_results([mean_model, guess_model, randomized_guess_model, naive_vgg_model, worldNET_city], 
+                  [test_images, test_images, test_images, test_images[:64], test_images[:64]], 
                   test_labels, metrics=[tf.keras.losses.MeanSquaredError(), models.MeanHaversineDistanceLoss(), models.DistanceAccuracy()])
 
 

@@ -16,6 +16,9 @@ from matplotlib import pyplot as plt
 import preprocessing_gsv as preprocessing
 
 def radians(deg):
+    """
+    converts degrees to radians
+    """
     pi_on_180 = 0.017453292519943295
     return deg * pi_on_180
 
@@ -53,6 +56,10 @@ class DistanceAccuracy():
         super().update_state(y_true, y_pred, sample_weight)
 
     def call(self, y_true, y_pred):
+        """
+        computes accuracy within threshold
+        """
+
         y_true = preprocessing.unnormalize_labels(y_true)
         y_pred = preprocessing.unnormalize_labels(y_pred)
 
@@ -110,7 +117,8 @@ class MeanHaversineDistanceLoss(tf.keras.losses.Loss):
 
 class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
     """
-    computes haversine distance loss with distribution requirement
+    *********** [UNUSED] ***********
+    computes haversine distance loss with distribution requirement 
     """
     def __init__(self, name="mean_haversine_distance_loss"):
         super().__init__(name=name)
@@ -149,6 +157,7 @@ class SpreadMeanHaversineDistanceLoss(tf.keras.losses.Loss):
 
 class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
     """
+    *********** [UNUSED] ***********
     computes haversine distance loss for a distribution
     """
     def __init__(self, name="mean_normal_haversine_distance_loss"):
@@ -184,14 +193,19 @@ class MeanNormalHaversineDistanceLoss(tf.keras.losses.Loss):
         return mean_c + 1 / (std_c + epsilon) + (1 / mean_sigma + mean_sigma) / 100
 
 
-class VGGCityFeaturesModel(tf.keras.Model):
-  def __init__(self, 
-            units		= 512,
-            input_shape = (300, 400, 3),
-            layers		= 1,
-            dropout		= 0.4,
-            output_units= 2,
-            name		= "vgg_feature_city"
+
+
+class NaiveVGG(tf.keras.Model):
+    """
+    Naive VGG implementation, structure of models
+    """
+    def __init__(self, 
+            units		= 512, 				# number of units in each dense layer
+            input_shape = (300, 400, 3),    # image input shape
+            layers		= 2, 				# number of dense layers
+            dropout		= 0.2, 				# dropout proportion per dense layer
+            output_units= 2, 				# number of units in output dense layer
+            name		= "naive_vgg"		# name of model
         ):		
         
         super().__init__(name=name)
@@ -204,21 +218,33 @@ class VGGCityFeaturesModel(tf.keras.Model):
             pooling=None,
         )
 
-        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=64, num_layers=4, output_units=output_units, output_activation="softmax")
+        self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
+        self.head = [
+            (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
+            tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")) for i in range(layers)
+        ]
+        self.output_layer = tf.keras.layers.Dense(output_units, name = f"{name}_output_dense")
 
-        self.loss = tf.keras.losses.CategoricalCrossentropy()
+        self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
-  def call(self, x):
-      x = self.vgg(x)
-      x = tf.transpose(x, perm=[0, 3, 1, 2])
-      x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
-      x = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
-      return x
+    def call(self, x):
+        x = self.vgg(x)
+        x = self.flatten_layer(x)
+        for dense_layer, dropout_layer in self.head:
+            x = dense_layer(x)
+            x = dropout_layer(x)
+        x = self.output_layer(x)
 
+        return x
 
 
 class worldNETCity(tf.keras.Model):
+    """
+    FINAL WORLDNET IMPLEMENTATION
+
+    utilizes city_model classifier to predict continuous location
+    """
     def __init__(self, 
             city_model,
             city_labels,
@@ -260,6 +286,9 @@ class worldNETCity(tf.keras.Model):
 
 
 class VGGCityModel(tf.keras.Model):
+    """
+    City classifier model
+    """
     def __init__(self, 
             units		= 512,
             input_shape = (300, 400, 3),
@@ -307,19 +336,34 @@ class VGGCityModel(tf.keras.Model):
         return x
 
 
+class FeatureNearestNeighbors():
 
-class NaiveVGG(tf.keras.Model):
-    def __init__(self, 
-            units		= 512, 				# number of units in each dense layer
-            input_shape = (300, 400, 3),
-            layers		= 2, 				# number of dense layers
-            dropout		= 0.2, 				# dropout proportion per dense layer
-            output_units= 2, 				# number of units in output dense layer
-            name		= "naive_vgg"		# name of model
-        ):		
+    """
+
+    nearest neighbors classifier
+
+    general idea:
+
+        store all or some of the training feature vectors and their corresponding latitude/longitude label
+        for each example in a testing dataset:
+            find the k nearest neighbors (with either euclidian or cosine or some other similarity metric)
+            compute the weighted mean of their locations
+            compute the weighted standard deviation of their locations
+            return this mean and standard deviation
+    
+    """
+
+    def __init__(self, input_shape=(224, 224, 3), vector_shape=(12, 9), name="feature_nearest_neighbors"):
+        self.name = name
+
+        self.vector_shape = vector_shape
+        self.vectors = []
+        self.labels = []
+
+        # self.vgg = tf.keras.models.load_model("weights/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5")
+        # self.vgg.summary()
         
-        super().__init__(name=name)
-
+        '''
         self.vgg = tf.keras.applications.VGG19(
             include_top=False,
             weights="imagenet",
@@ -327,33 +371,128 @@ class NaiveVGG(tf.keras.Model):
             input_shape=input_shape,
             pooling=None,
         )
-
-        self.flatten_layer = tf.keras.layers.Flatten(name=f"{name}_flatten")
-        self.head = [
-            (tf.keras.layers.Dense(units, activation="relu", name=f"{name}_dense_{i}"), \
-            tf.keras.layers.Dropout(dropout, name = f"{name}_dropout_{i}")) for i in range(layers)
-        ]
-        self.output_layer = tf.keras.layers.Dense(output_units, name = f"{name}_output_dense")
+        
+        self.vgg.trainable = False
+        '''
 
         self.loss = MeanHaversineDistanceLoss()
         self.optimizer = tf.keras.optimizers.Adam(0.01)
 
-    def call(self, x):
-        x = self.vgg(x)
-        x = self.flatten_layer(x)
-        for dense_layer, dropout_layer in self.head:
-            x = dense_layer(x)
-            x = dropout_layer(x)
-        x = self.output_layer(x)
+    def train(self, images, labels):
+        
+        num_images = len(images)
+        
+        #vgg_features = self.vgg(images)
 
-        return x
+        print("\n" + self.name, "training on", num_images, "images ...")
+        print(np.shape(images))
+        with tqdm(total=num_images) as pbar:
+            for i in range(np.shape(images)[0]):
+                self.vectors.append(images[i,:,:].flatten())
+                self.labels.append(labels[i,:,:].flatten()[:2])
+                pbar.update(1)
 
+
+    def build_vocabulary(self, image_paths, vocab_size):
+        ppc = 16
+        cpb = 2
+
+        num_imgs = len(image_paths)
+        total_fds = np.empty((0, cpb*cpb*9))
+
+        for i in range(num_imgs):
+            img = skimage.io.imread(image_paths[i], as_gray=True)
+            fd_mat = skimage.feature.hog(img, pixels_per_cell=(ppc, ppc), cells_per_block=(cpb, cpb), feature_vector=True)
+            hog_fds = fd_mat.reshape(-1, cpb*cpb*9)
+            total_fds = np.append(total_fds, hog_fds, axis=0)
+
+        kmeans = sklearn.cluster.MiniBatchKMeans(n_clusters=vocab_size, max_iter=100).fit(total_fds)
+
+        return kmeans.cluster_centers_
+
+    def get_bags_of_words(self, image_paths, vocab):
+        ppc = 16
+        cpb = 2
+
+        hist_size = vocab.shape[0]
+        img_hists = np.empty((0, hist_size))
+
+        for i in range(len(image_paths)):
+            img_hist = np.zeros((1, hist_size)) 
+            img = skimage.io.imread(image_paths[i], as_gray=True)
+            fd_mat = skimage.feature.hog(img, pixels_per_cell=(ppc, ppc), cells_per_block=(cpb, cpb), feature_vector=True)
+            hog_fds = fd_mat.reshape(-1, cpb*cpb*9)
+
+            dists = scipy.spatial.distance.cdist(hog_fds, vocab, "euclidean")
+            inds = np.argsort(dists, axis=1)[:, 0]
+            for j in range(len(inds)):
+                img_hist[0][inds[j]] += 1
+            img_hist[0] = img_hist[0] / np.linalg.norm(img_hist[0])
+            img_hists = np.append(img_hists, img_hist, axis=0)
+        
+        return img_hists
+
+    def calc_mean(self, labels, dists):
+        # labels shape: (x, 2)
+        # dists shape: (x, k)
+        # x = number of test images
+        plt.scatter(labels[:, 0], labels[:, 1])
+        plt.ylim(0, 1)
+        plt.xlim(0, 1)
+        plt.show()
+        weighted_x = np.sum(labels[:, 0] * dists, axis=1) / np.sum(dists, axis=1)
+        weighted_y = np.sum(labels[:, 1] * dists, axis=1) / np.sum(dists, axis=1)
+        return weighted_x, weighted_y
     
+    def calc_sd(self, dists, k):
+        # means shape: (x, 1)
+        # dists shape: (x, k)
+        # x = number of test images
+        weighted_sd = np.sqrt(np.sum((dists ** 2), axis=1) / k)
+        return weighted_sd
 
+    def nearest_neighbor_classify(self, train_image_feats, train_labels, test_image_feats):
+        
+        k = 100
+        # finding the distances btwn each of the feature vectors
+        print("finding distances...")
+        dists = scipy.spatial.distance.cdist(test_image_feats, train_image_feats, 'euclidean')
+        # finding k nearest neighbors of vectors
+        print("sorting and finding k neighbors...")
+        k_inds = np.argsort(dists, axis=1)[:, :k]
+        print(np.shape(k_inds))
+        # extracting the k nearest neighbors x and y labels 
+        k_labels_x = np.take(train_labels[:,0:1], k_inds)
+        k_labels_y = np.take(train_labels[:,1:2], k_inds)
+        # k_labels shape: (x, k, 2) -> x training image features, k NN, 2 coordinates
+        k_labels = np.stack((k_labels_x, k_labels_y), axis=2)
+
+        # k nearest distances to the given training image
+        k_dists = np.take(dists, k_inds)
+
+        # calculate the weighted means and standard deviations
+        weighted_m = self.calc_mean(k_labels, k_dists)
+        weighted_m_x = weighted_m[:, 0]
+        weighted_m_y = weighted_m[:, 1]
+        weighted_sd = self.calc_sd(k_dists, k)
+
+        return weighted_m_x, weighted_m_y, weighted_sd
+    
+    def call(self, images):
+        # pass
+        test_feats = []
+        for i in range(np.shape(images)[0]):
+          test_feats.append(images[i,:,:].flatten())
+        print(np.shape(self.vectors))
+        print(np.shape(test_feats))
+        print(np.shape(self.labels))
+        return self.nearest_neighbor_classify(train_image_feats=np.array(self.vectors), train_labels=np.array(self.labels), test_image_feats=np.array(test_feats))
+    
+    
 class GuessModel():
 
     """
-    predicts by guessing from training data
+    predicts by guessing from training data [control]
     """
 
     def __init__(self, train_labels, loss_fn, name="guess_model"):
@@ -373,7 +512,7 @@ class GuessModel():
 class MeanModel():
 
     """
-    predicts with mean of training data
+    predicts with mean of training data [control]
     """
 
     def __init__(self, train_labels, loss_fn, name="mean_model"):
@@ -393,7 +532,7 @@ class MeanModel():
 class RandomizedGuessModel():
 
     """
-    predicts random location
+    predicts random location [control]
     """
 
     def __init__(self, name="randomized_guess_model"):
@@ -406,7 +545,7 @@ class RandomizedGuessModel():
 class SimpleNN(tf.keras.Model):
 
     """
-    dumb neural network
+    dumb neural network [control]
     """
 
     def __init__(self, output_units, name="simple_nn"):
@@ -420,12 +559,55 @@ class SimpleNN(tf.keras.Model):
     
     def call(self, data):
         return self.dense(self.flatten(data))
+    
+
+
+    
+
+
+class VGGCityFeaturesModel(tf.keras.Model):
+  """
+  *********** [UNUSED] ***********
+  classifies features based on city
+  """
+  def __init__(self, 
+            units		= 512,
+            input_shape = (300, 400, 3),
+            layers		= 1,
+            dropout		= 0.4,
+            output_units= 2,
+            name		= "vgg_feature_city"
+        ):		
+        
+        super().__init__(name=name)
+
+        self.vgg = tf.keras.applications.VGG19(
+            include_top=False,
+            weights="imagenet",
+            input_tensor=None,
+            input_shape=input_shape,
+            pooling=None,
+        )
+
+        self.feature_distribution_nn = FeatureDistributionNN(hidden_size=64, num_layers=4, output_units=output_units, output_activation="softmax")
+
+        self.loss = tf.keras.losses.CategoricalCrossentropy()
+        self.optimizer = tf.keras.optimizers.Adam(0.01)
+
+  def call(self, x):
+      x = self.vgg(x)
+      x = tf.transpose(x, perm=[0, 3, 1, 2])
+      x = tf.keras.layers.TimeDistributed(tf.keras.layers.Flatten())(x)
+      x = tf.keras.layers.TimeDistributed(self.feature_distribution_nn)(x)
+      return x
+
 
 
 
 class FeatureDistributionNN(tf.keras.Model):
 
     """
+    *********** [UNUSED] ***********
     predicts the mean and standard deviation of location of features
     """
 
@@ -454,11 +636,8 @@ class FeatureDistributionNN(tf.keras.Model):
 class FeatureDistributionModel():
 
     """
-
-    TODO
-
+    *********** [UNUSED] ***********
     predicts location based on feature locations
-
     """
 
     def __init__(self, hidden_size=8, num_layers=2, name="feature_distribution_model"):
@@ -490,80 +669,14 @@ class FeatureDistributionModel():
         
         return np.array(centers)
 
-    """
-    def call(self, x):
-        Predict the most likely coordinate given samples of features.
-        Logic:
-        Find the maximum point of the sum of probability distribution functions (PDF) of all normal distributions.
-        Since there may be a lot of local max and min (and wrt computational resources), I am not sure if gradient
-        optimization is the best idea. I have two ideas of finding or estimating the maximum point.
-        Ideas:
-        1. Estimation from uniform samples
-        - uniformly sample points across entire space and find point with maximum probability
-        2. Sum of directions
-        - sum all the scaled directions between every mean and the center
-        - this is more like a "walk" over the space
-        - this raises the question of whether the center (0, 0) is the best starting point?
-        Args:
-        - self properties
-            - call function used to predict mean predictions and sigma predictions of all features
-        - x, features to predict from
-        Returns:
-        - coordinate (x, y) of highest probability
-        - scaled probability density output at that coordinate
-
-        # Get mean and sigma predictions
-        mean_preds, sigma_preds = self.feature_distribution_nn.call(x)
-
-        # Create 2d normal distributions with every pair of mean and sigma predictions
-        distributions = [
-            multivariate_normal(mu, sigma) for mu, sigma in zip(mean_preds, sigma_preds)
-        ]
-
-        # Idea 1: Estimation from uniform samples
-        # - find the "box" that contains all means
-        # - uniformly sample points over the box
-        # - calculate the summed PDF at every point
-        # - find coordinate of maximum value
-
-        # Bottom left corner
-        bottom_left_coordinate = tf.reduce_min(mean_preds, axis=0)
-
-        # Top right corner
-        top_right_coordinate = tf.reduce_max(mean_preds, axis=0)
-
-
-        # Sample grid coordinates of the box 
-        nx, ny = (10, 10)
-
-        x_space = tf.linspace(bottom_left_coordinate[0], top_right_coordinate[0], nx)
-        y_space = tf.linspace(bottom_left_coordinate[1], top_right_coordinate[1], ny)
-
-        X, Y = tf.meshgrid(x_space, y_space)
-
-        mesh_coords = tf.reshape(tf.concat([X[..., tf.newaxis], Y[..., tf.newaxis]], axis = -1), (-1, 2))
-
-        # Sum probability density of each coordinate for every distribution based on each feature prediction
-        pdf_scores = tf.zeros((tf.shape(mesh_coords)[0], ), dtype = tf.float32)
-
-        for dist in distributions:
-            pdf_scores += dist.pdf(mesh_coords)
-        
-        return mesh_coords[tf.argmax(pdf_scores, axis = 0)], (tf.reduce_max(pdf_scores) / tf.reduce_sum(pdf_scores))
-
-
-        # Idea 2: Sum of directions
-        # - calculate all vector directions between every mean and the center
-        # - scale each direction based on the std of the distribution that is pointed TOWARDS (simulating "pull" of distribution)
-        # - sum all directions
-
-    def normal_cdf(x, mu, sigma):
-        return 0.5 * (1. + erf((x - mu) / (sigma * (2 ** 0.5))))
-    """
-
 
 
 class VGGFeatureDistributionModel(tf.keras.Model):
+
+    """
+    *********** [UNUSED] ***********
+    predicts based on VGG and feature predictor
+    """
 
     def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, name="vgg_feature_distribution_model"):
         
@@ -595,6 +708,11 @@ class VGGFeatureDistributionModel(tf.keras.Model):
 
 
 class VGGFullFeatureDistributionModel(tf.keras.Model):
+
+    """
+    *********** [UNUSED] ***********
+    predicts based on VGG and feature predictor
+    """
 
     def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, name="vgg_full_feature_distribution_model"):
         
@@ -632,7 +750,12 @@ class VGGFullFeatureDistributionModel(tf.keras.Model):
 
     
 
-class worldNET():
+class worldNET_test():
+
+    """
+    *********** [UNUSED] ***********
+    predicts based on VGG and feature predictor, returns dominant cluster centroid
+    """
 
     def __init__(self, input_shape=(300, 400), hidden_size=8, num_layers=2, num_clusters=5, name="worldnet"):
 
@@ -680,6 +803,7 @@ def inception_module(x,
     
     """
     adapted from google
+    creates inception module
     """
 
     kernel_init = tf.keras.initializers.glorot_uniform()
@@ -705,6 +829,7 @@ def createInceptionModel(input_shape, output_units=32):
 
     """
     adapted from google
+    creates inception network
     """
         
     kernel_init = tf.keras.initializers.glorot_uniform()
@@ -826,167 +951,3 @@ def createInceptionModel(input_shape, output_units=32):
     x = tf.keras.layers.Dense(output_units, activation="sigmoid", name='output_dense')
 
     return tf.keras.Model(input_layer, [x, x1, x2], name='inception')
-
-
-class FeatureNearestNeighbors():
-
-    """
-    
-    TODO
-
-    general idea:
-
-        store all or some of the training feature vectors and their corresponding latitude/longitude label
-        for each example in a testing dataset:
-            find the k nearest neighbors (with either euclidian or cosine or some other similarity metric)
-            compute the weighted mean of their locations
-            compute the weighted standard deviation of their locations
-            return this mean and standard deviation
-    
-    """
-
-    def __init__(self, input_shape=(224, 224, 3), vector_shape=(12, 9), name="feature_nearest_neighbors"):
-        self.name = name
-
-        self.vector_shape = vector_shape
-        self.vectors = []
-        self.labels = []
-
-        # self.vgg = tf.keras.models.load_model("weights/vgg16_weights_tf_dim_ordering_tf_kernels_notop.h5")
-        # self.vgg.summary()
-        
-        '''
-        self.vgg = tf.keras.applications.VGG19(
-            include_top=False,
-            weights="imagenet",
-            input_tensor=None,
-            input_shape=input_shape,
-            pooling=None,
-        )
-        
-        self.vgg.trainable = False
-        '''
-
-        self.loss = MeanHaversineDistanceLoss()
-        self.optimizer = tf.keras.optimizers.Adam(0.01)
-
-    def train(self, images, labels):
-        
-        num_images = len(images)
-        
-        #vgg_features = self.vgg(images)
-
-        print("\n" + self.name, "training on", num_images, "images ...")
-        print(np.shape(images))
-        with tqdm(total=num_images) as pbar:
-            for i in range(np.shape(images)[0]):
-                self.vectors.append(images[i,:,:].flatten())
-                self.labels.append(labels[i,:,:].flatten()[:2])
-                pbar.update(1)
-
-
-    def build_vocabulary(self, image_paths, vocab_size):
-        ppc = 16
-        cpb = 2
-
-        num_imgs = len(image_paths)
-        total_fds = np.empty((0, cpb*cpb*9))
-
-        for i in range(num_imgs):
-            img = skimage.io.imread(image_paths[i], as_gray=True)
-            fd_mat = skimage.feature.hog(img, pixels_per_cell=(ppc, ppc), cells_per_block=(cpb, cpb), feature_vector=True)
-            hog_fds = fd_mat.reshape(-1, cpb*cpb*9)
-            total_fds = np.append(total_fds, hog_fds, axis=0)
-
-        kmeans = sklearn.cluster.MiniBatchKMeans(n_clusters=vocab_size, max_iter=100).fit(total_fds)
-
-        return kmeans.cluster_centers_
-
-    def get_bags_of_words(self, image_paths, vocab):
-        ppc = 16
-        cpb = 2
-
-        hist_size = vocab.shape[0]
-        img_hists = np.empty((0, hist_size))
-
-        for i in range(len(image_paths)):
-            img_hist = np.zeros((1, hist_size)) 
-            img = skimage.io.imread(image_paths[i], as_gray=True)
-            fd_mat = skimage.feature.hog(img, pixels_per_cell=(ppc, ppc), cells_per_block=(cpb, cpb), feature_vector=True)
-            hog_fds = fd_mat.reshape(-1, cpb*cpb*9)
-
-            dists = scipy.spatial.distance.cdist(hog_fds, vocab, "euclidean")
-            inds = np.argsort(dists, axis=1)[:, 0]
-            for j in range(len(inds)):
-                img_hist[0][inds[j]] += 1
-            img_hist[0] = img_hist[0] / np.linalg.norm(img_hist[0])
-            img_hists = np.append(img_hists, img_hist, axis=0)
-        
-        return img_hists
-
-    '''
-        general idea:
-
-                store all or some of the training feature vectors and their corresponding latitude/longitude label
-                for each example in a testing dataset:
-                    find the k nearest neighbors (with either euclidian or cosine or some other similarity metric)
-                    compute the weighted mean of their locations
-                    compute the weighted standard deviation of their locations
-                    return this mean and standard deviation
-        '''
-
-    def calc_mean(self, labels, dists):
-        # labels shape: (x, 2)
-        # dists shape: (x, k)
-        # x = number of test images
-        plt.scatter(labels[:, 0], labels[:, 1])
-        plt.ylim(0, 1)
-        plt.xlim(0, 1)
-        plt.show()
-        weighted_x = np.sum(labels[:, 0] * dists, axis=1) / np.sum(dists, axis=1)
-        weighted_y = np.sum(labels[:, 1] * dists, axis=1) / np.sum(dists, axis=1)
-        return weighted_x, weighted_y
-    
-    def calc_sd(self, dists, k):
-        # means shape: (x, 1)
-        # dists shape: (x, k)
-        # x = number of test images
-        weighted_sd = np.sqrt(np.sum((dists ** 2), axis=1) / k)
-        return weighted_sd
-
-    def nearest_neighbor_classify(self, train_image_feats, train_labels, test_image_feats):
-        
-        k = 100
-        # finding the distances btwn each of the feature vectors
-        print("finding distances...")
-        dists = scipy.spatial.distance.cdist(test_image_feats, train_image_feats, 'euclidean')
-        # finding k nearest neighbors of vectors
-        print("sorting and finding k neighbors...")
-        k_inds = np.argsort(dists, axis=1)[:, :k]
-        print(np.shape(k_inds))
-        # extracting the k nearest neighbors x and y labels 
-        k_labels_x = np.take(train_labels[:,0:1], k_inds)
-        k_labels_y = np.take(train_labels[:,1:2], k_inds)
-        # k_labels shape: (x, k, 2) -> x training image features, k NN, 2 coordinates
-        k_labels = np.stack((k_labels_x, k_labels_y), axis=2)
-
-        # k nearest distances to the given training image
-        k_dists = np.take(dists, k_inds)
-
-        # calculate the weighted means and standard deviations
-        weighted_m = self.calc_mean(k_labels, k_dists)
-        weighted_m_x = weighted_m[:, 0]
-        weighted_m_y = weighted_m[:, 1]
-        weighted_sd = self.calc_sd(k_dists, k)
-
-        return weighted_m_x, weighted_m_y, weighted_sd
-    
-    def call(self, images):
-        # pass
-        test_feats = []
-        for i in range(np.shape(images)[0]):
-          test_feats.append(images[i,:,:].flatten())
-        print(np.shape(self.vectors))
-        print(np.shape(test_feats))
-        print(np.shape(self.labels))
-        return self.nearest_neighbor_classify(train_image_feats=np.array(self.vectors), train_labels=np.array(self.labels), test_image_feats=np.array(test_feats))

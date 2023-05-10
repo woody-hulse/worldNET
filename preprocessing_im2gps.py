@@ -13,6 +13,12 @@ import matplotlib
 matplotlib.use("tkagg")
 from matplotlib import pyplot as plt
 
+"""
+
+*********** [UNUSED] ***********
+
+"""
+
 DATA_PATH = "../data/"
 NUM_SAMPLES = 500
 IMAGE_PATH = DATA_PATH + "gps_query_imgs/"

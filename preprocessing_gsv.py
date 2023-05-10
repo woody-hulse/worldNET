@@ -14,6 +14,8 @@ from matplotlib import pyplot as plt
 
 """
 
+Preprocess GSV-Cities Dataset
+
 data from   : https://www.kaggle.com/datasets/amaralibey/gsv-cities
 paper       : https://arxiv.org/pdf/2210.10239.pdf
 
@@ -40,6 +42,10 @@ IMAGE_SHAPE = (300, 400)
 def ohe_cities_labels(cities, labels):
     """
     converts cities to one-hot encoding and finds their mean location
+    cities      : (n,) list of strings corresponding with each label
+    labels      : (n, 2) array of image labels
+    
+    returns one-hot encoded cities and their corresponding labels
     """
 
     unique_cities = []
@@ -69,6 +75,11 @@ def ohe_cities_labels(cities, labels):
 def plot_points(points_list, image_path, colors=['r'], density_map=False, normalize_points=False):
     """
     plots points over an image
+    points_list     : all set of points being plotted
+    image_path      : world image path to plot over
+    colors          : color for each point list
+    density_map     : convert points to densities
+    normalize_points: False if input points are already normalized
     """
 
     print("plotting points ...")
@@ -102,6 +113,14 @@ def plot_points(points_list, image_path, colors=['r'], density_map=False, normal
 
 
 def plot_density_map(points, image, r, grad=5):
+    """
+    plots density map of given points
+    points      : points for density map
+    image       : world image to plot over
+    r           : representation radius of points
+    grad        : evenness of heatmap gradient
+    """
+
     x_min, y_min = 0, 0
     x_max, y_max = image.shape[0], image.shape[1]
     n_bins = 500
@@ -129,6 +148,12 @@ def plot_density_map(points, image, r, grad=5):
 def uniform_geographic_distribution(images, labels, cities, radius=10, maximum=100):
     """
     remove image/label/cities from dense areas
+    images      : (n, res, res) array of images
+    labels      : (n, 2) array of points
+    radius      : downsampling radius
+    maximum     : number of allowable cities in a radius
+
+    returns downsampled "de-biased" images, labels, and cities lists
     """
 
     print("\nfiltering", len(images), "images for uniform distribution ...")
@@ -169,6 +194,8 @@ def uniform_geographic_distribution(images, labels, cities, radius=10, maximum=1
 def print_city_distribution(index_cities, cities):
     """
     prints table of images in each city
+    index_cities    : list of city indices
+    cities          : list of city names
     """
     index_cities = list(set(index_cities))
     cities = list(cities)
@@ -202,7 +229,7 @@ def expand_and_group_feature_labels(labels, num_features=512):
 
 def shuffle_data(images, labels, cities):
     """
-    randomly shuffles data
+    randomly shuffles images, labels, cities
     """
     
     indices = np.arange(len(images))
@@ -226,7 +253,6 @@ def plot_features(features, num):
     plots some number of features
     """
 
-
     indices = np.arange(len(features))
     np.random.shuffle(indices)
 
@@ -237,7 +263,7 @@ def plot_features(features, num):
 
 def normalize_labels(labels):
     """
-    normalize degree angle of labels
+    normalize degree angle of labels to 0-1
     """
 
     nomarlized_labels = (labels + np.array([[90, 180]])) / np.array([[180, 360]])
@@ -247,7 +273,7 @@ def normalize_labels(labels):
 
 def unnormalize_labels(labels):
     """
-    unnormalize degree angles of labels
+    unnormalize degree angles of labels to -180-180
     """
 
     unnormalized_labels = labels * np.array([[180, 360]]) - np.array([[90, 180]])
@@ -257,7 +283,7 @@ def unnormalize_labels(labels):
 
 def pass_through_VGG(images):
     """
-    passes input through vgg
+    passes input images through vgg to precompute vgg features
     """
 
     print("\nloading vgg ...")
@@ -280,6 +306,11 @@ def pass_through_VGG(images):
 def reshape_features(image_features, labels, cities):
     """
     reformats feature data to link individual features to labels
+    image_features  : grouped list of image features
+    lables          : image labels
+    cities          : cities
+
+    returns (n, 512, sz, sz) -> (n * 512, sz * sz) labels
     """
     feature_vectors = []
     feature_labels = []
@@ -306,6 +337,7 @@ def reshape_grouped_features(image_features, labels, cities):
     """
     transpose features
     """
+
     image_features = np.transpose(image_features, axes=[0, 3, 1, 2])
     image_features = image_features.reshape((image_features.shape[0], image_features.shape[1], -1))
     return image_features, labels, cities
@@ -322,6 +354,10 @@ def train_test_split(data, prop=16/23):
 def load_random_data(image_path="Images/", num_per_city=100):
     """
     loads random data
+    image_path  : path to load images from
+    num_per_city: number of images to load per city
+
+    returns loaded images, labels, cities
     """
 
     print("compiling randomized image paths ...")
@@ -342,7 +378,7 @@ def load_random_data(image_path="Images/", num_per_city=100):
 
 def load_data_from_paths(paths):
     """
-    loads data from specified paths
+    loads data from specified paths (from root archive directory)
     """
 
     print("loading images from paths ...")
@@ -397,7 +433,7 @@ def load_images(image_path):
 
 def load_data(data_path):
     """
-    loads saved data
+    loads saved data from data_path
     """
 
     print("loading data from", data_path, "...")
@@ -423,7 +459,7 @@ def load_data(data_path):
 
 def save_data(images, labels, cities, data_path):
     """
-    saves data
+    saves images, labels, cities to data_path
     """
 
     print("saving data to", data_path, "...")
@@ -441,12 +477,3 @@ def save_data(images, labels, cities, data_path):
     cities = np.array(cities)
     
     return images, labels, cities
-
-
-
-def main():
-    paths = load_random_data("Images/")
-    images, labels, cities = load_data_from_paths(paths)
-
-if __name__ == "__main__":
-    main()

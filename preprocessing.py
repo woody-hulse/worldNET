@@ -1,5 +1,7 @@
 """
 
+*********** [UNUSED] ***********
+
 The dataset contains 62,058 high quality Google Street View images. The images cover the
 downtown and neighboring areas of Pittsburgh, PA; Orlando, FL and partially Manhattan, NY.
 Accurate GPS coordinates of the images and their compass direction are provided as well.
@@ -33,6 +35,8 @@ Pattern Analysis and Machine Intelligence (TPAMI), 2014.
 
 
 """
+
+*********** [UNUSED] ***********
 
 Instructions:
 
