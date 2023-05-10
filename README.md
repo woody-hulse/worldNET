@@ -2,7 +2,7 @@
   <img src="https://user-images.githubusercontent.com/112116530/232979540-e28f53e4-4e4f-48ea-bbb9-1d3a2d1d4a63.png" alt= “” width="300" height="300">
 </p>
 
-_We propose worldNET a training-efficient location predictor for sparse geographic data by continuous latitude and longitude coordinates. By taking a continuous approach, we can derive meaningful nonlinear interpolations of feature data and are able to create a more explainable mapping of global geographic features. We show that worldNET can deliver comparable performance (~55\% continent accuracy) for seen locations and triple guessing performance on unseen locations (~21\% continent accuracy)._
+_We propose worldNET, a training-efficient location predictor for sparse geographic data by continuous latitude and longitude coordinates. By taking a continuous approach, we can derive meaningful nonlinear interpolations of feature data and are able to create a more explainable mapping of global geographic features. We show that worldNET can deliver comparable performance (~55\% continent accuracy) for seen locations and triple guessing performance on unseen locations (~21\% continent accuracy)._
 
 ### Introduction
 
